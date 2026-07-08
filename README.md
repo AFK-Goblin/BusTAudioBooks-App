@@ -112,4 +112,4 @@ bump): build a new APK with `eas build`, host it, and point the backend's
 
 - **BusTAudio backend / Stremio addon** — the server this app talks to; it
   generates the install link on its `/configure` page and serves the `/app` API.
-  <!-- repo link: add once published -->
+  https://github.com/AFK-Goblin/BusTAudioBooks

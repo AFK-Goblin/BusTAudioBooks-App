@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "BusTAudioBooks",
+    "slug": "bustaudio",
+    "version": "1.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "backgroundColor": "#15101c",
+    "splash": {
+      "image": "./assets/icon.png",
+      "backgroundColor": "#15101c",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.bustaudio.app",
+      "backgroundColor": "#15101c",
+      "permissions": [
+        "INTERNET",
+        "WAKE_LOCK",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "POST_NOTIFICATIONS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#15101c"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/836379ac-471a-4dd9-90d0-954f2fd42401"
+    },
+    "icon": "./assets/icon.png",
+    "extra": {
+      "eas": {
+        "projectId": "836379ac-471a-4dd9-90d0-954f2fd42401"
+      }
+    },
+    "ios": {}
+  }
+}

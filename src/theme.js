@@ -1,0 +1,16 @@
+export const theme = {
+  bg: "#15101c",
+  card: "#221a2e",
+  border: "#3a3147",
+  text: "#ece8f1",
+  sub: "#a99fb8",
+  dim: "#8f859e",
+  accent: "#8b5cf6",
+  accent2: "#6d28d9",
+  good: "#22c55e",
+  warn: "#f59e0b",
+  gradient: ["#8b5cf6", "#6d28d9"],
+  coverGradient: ["#3d3157", "#241b33"],
+  playerGradient: ["#2c2140", "#15101c"],
+  headerGradient: ["#271d3a", "#15101c"],
+};

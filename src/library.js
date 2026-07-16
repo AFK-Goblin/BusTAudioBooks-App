@@ -23,10 +23,20 @@ export async function getBook(id) {
   return lib[id] || null;
 }
 
+// Entries saved before comics existed have no `type` — they're audiobooks.
+export function typeOf(entry) {
+  return entry && entry.type === "comic" ? "comic" : "audiobook";
+}
+
 export async function updateProgress(id, prog) {
   const lib = await getLibrary();
   if (!lib[id]) return;
-  lib[id].progress = { ...(lib[id].progress || {}), ...prog, lastPlayed: Date.now() };
+  const now = Date.now();
+  const stamped = { ...prog, lastPlayed: now };
+  // Comic progress ({ page, totalPages }) also stamps lastRead for the
+  // Continue Reading rail's sort order.
+  if (prog.page != null) stamped.lastRead = now;
+  lib[id].progress = { ...(lib[id].progress || {}), ...stamped };
   await setLibrary(lib);
 }
 
@@ -45,8 +55,22 @@ export async function listBooks() {
 export async function continueListening() {
   const books = await listBooks();
   return books
+    .filter((b) => typeOf(b) !== "comic")
     .filter((b) => b.progress && b.progress.position > 5 && !b.progress.finished)
     .sort((a, b) => (b.progress.lastPlayed || 0) - (a.progress.lastPlayed || 0));
+}
+
+// Comics with saved page progress, most-recent first (Continue Reading).
+export async function continueReading() {
+  const books = await listBooks();
+  return books
+    .filter((b) => typeOf(b) === "comic")
+    .filter((b) => b.progress && b.progress.page > 0 && !b.progress.finished)
+    .sort(
+      (a, b) =>
+        (b.progress.lastRead || b.progress.lastPlayed || 0) -
+        (a.progress.lastRead || a.progress.lastPlayed || 0)
+    );
 }
 
 // After wiping the download folder: clear flags/local files but keep listening

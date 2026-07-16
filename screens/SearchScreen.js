@@ -5,28 +5,55 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { theme } from "../src/theme";
-import { search } from "../src/api";
+import { search, health } from "../src/api";
 import { formatBytes } from "../src/format";
-import { continueListening } from "../src/library";
+import { continueListening, continueReading } from "../src/library";
 import { loadBook } from "../src/player";
 import { useDownloads } from "../src/downloadStore";
 import { CoverArt } from "../src/ui";
 import { SearchIcon, CloseIcon, NoteGlyph } from "../src/icons";
 import { useScreenPad } from "../src/layout";
 
-const CATEGORIES = [
-  "Fantasy", "Sci-Fi", "Mystery", "Thriller", "Romance",
-  "LitRPG", "Biography", "History", "Self-Help", "Horror",
-];
+// One screen, two content types: the Home tab renders it as audiobooks, the
+// Comics tab as comics. Everything type-specific lives in this table.
+const CONTENT = {
+  audiobook: {
+    brand: "BusTAudioBooks",
+    placeholder: "Search audiobooks…",
+    recentsKey: "bustaudio_recent",
+    contSection: "Continue Listening",
+    detailScreen: "book",
+    categories: [
+      "Fantasy", "Sci-Fi", "Mystery", "Thriller", "Romance",
+      "LitRPG", "Biography", "History", "Self-Help", "Horror",
+    ],
+  },
+  comic: {
+    brand: "Comics",
+    placeholder: "Search comics…",
+    recentsKey: "bustaudio_recent_comics",
+    contSection: "Continue Reading",
+    detailScreen: "comic",
+    categories: [
+      "Manhwa", "Manga", "Superhero", "Action", "Fantasy",
+      "Romance", "Isekai", "Horror",
+    ],
+  },
+};
 
 // Survives unmount: only the top screen is mounted, so without this the
 // search results vanish every time you open a book and come back.
-let cache = { q: "", items: [], searched: false, page: 1, noMore: false };
+const emptyCache = () => ({ q: "", items: [], searched: false, page: 1, noMore: false });
+const caches = { audiobook: emptyCache(), comic: emptyCache() };
 
-const RKEY = "bustaudio_recent";
 const RECENT_MAX = 8;
 
-export default function SearchScreen({ nav }) {
+export default function SearchScreen({ nav, contentType = "audiobook" }) {
+  const C = CONTENT[contentType] || CONTENT.audiobook;
+  const CATEGORIES = C.categories;
+  const RKEY = C.recentsKey;
+  const cache = caches[contentType];
+  const setCache = (next) => { caches[contentType] = next; };
   const [q, setQ] = useState(cache.q);
   const [items, setItems] = useState(cache.items);
   const [busy, setBusy] = useState(false);
@@ -36,12 +63,32 @@ export default function SearchScreen({ nav }) {
   const [noMore, setNoMore] = useState(cache.noMore);
   const [cont, setCont] = useState([]);
   const [recents, setRecents] = useState([]);
+  const [serverNote, setServerNote] = useState(null);
   const downloads = useDownloads();
   const topPad = useScreenPad();
 
+  // The Comics tab only works when the server supports it AND has Jackett —
+  // say so up front instead of letting every search come back empty.
+  useEffect(() => {
+    if (contentType !== "comic") return;
+    (async () => {
+      try {
+        const h = await health();
+        const s = h && h.sources;
+        if (!s || s.comics === undefined) {
+          setServerNote("Your server doesn't support comics yet — update the BusTAudio server to enable this tab.");
+        } else if (!s.comics) {
+          setServerNote("Comics search needs Jackett/Prowlarr configured on your server (an indexer with comics, category 7030).");
+        }
+      } catch (_) {
+        /* offline — the search itself will surface the error */
+      }
+    })();
+  }, [contentType]);
+
   useEffect(() => {
     (async () => {
-      setCont(await continueListening());
+      setCont(contentType === "comic" ? await continueReading() : await continueListening());
       try {
         const r = await AsyncStorage.getItem(RKEY);
         if (r) setRecents(JSON.parse(r));
@@ -71,10 +118,10 @@ export default function SearchScreen({ nav }) {
     setError(null);
     setSearched(true);
     try {
-      const results = await search(query);
+      const results = await search(query, 1, contentType);
       setItems(results);
       setNoMore(results.length === 0);
-      cache = { q: query, items: results, searched: true, page: 1, noMore: results.length === 0 };
+      setCache({ q: query, items: results, searched: true, page: 1, noMore: results.length === 0 });
       if (results.length > 0) rememberSearch(query);
     } catch (e) {
       setError(e.message || "Search failed");
@@ -85,15 +132,16 @@ export default function SearchScreen({ nav }) {
   }, [q]);
 
   async function loadMore() {
-    if (busyMore || noMore || !cache.q) return;
+    const cur = caches[contentType];
+    if (busyMore || noMore || !cur.q) return;
     setBusyMore(true);
     try {
-      const next = cache.page + 1;
-      const more = await search(cache.q, next);
-      const seen = new Set(cache.items.map((it) => it.id));
+      const next = cur.page + 1;
+      const more = await search(cur.q, next, contentType);
+      const seen = new Set(cur.items.map((it) => it.id));
       const fresh = more.filter((it) => !seen.has(it.id));
-      const merged = [...cache.items, ...fresh];
-      cache = { ...cache, items: merged, page: next, noMore: fresh.length === 0 };
+      const merged = [...cur.items, ...fresh];
+      setCache({ ...cur, items: merged, page: next, noMore: fresh.length === 0 });
       setItems(merged);
       setNoMore(fresh.length === 0);
     } catch (_) {
@@ -104,6 +152,11 @@ export default function SearchScreen({ nav }) {
   }
 
   async function resume(book) {
+    if (contentType === "comic") {
+      // ComicScreen owns re-opening (local pages, cached pages, or re-resolve).
+      nav.navigate("comic", { item: book, resume: true });
+      return;
+    }
     const p = book.progress || {};
     try {
       await loadBook(book, p.trackIndex || 0, p.position || 0);
@@ -115,21 +168,21 @@ export default function SearchScreen({ nav }) {
 
   function clearSearch() {
     setQ(""); setItems([]); setSearched(false); setError(null); setNoMore(false);
-    cache = { q: "", items: [], searched: false, page: 1, noMore: false };
+    setCache(emptyCache());
   }
 
   const showHome = !searched && items.length === 0;
 
   return (
     <View style={[styles.wrap, { paddingTop: topPad }]}>
-      <Text style={styles.brand}>BusTAudioBooks</Text>
+      <Text style={styles.brand}>{C.brand}</Text>
 
       <View style={styles.searchRow}>
         <View style={styles.inputWrap}>
           <SearchIcon size={18} color={theme.dim} />
           <TextInput
             style={styles.input}
-            placeholder="Search audiobooks…"
+            placeholder={C.placeholder}
             placeholderTextColor={theme.dim}
             value={q}
             onChangeText={setQ}
@@ -148,6 +201,12 @@ export default function SearchScreen({ nav }) {
           </TouchableOpacity>
         )}
       </View>
+
+      {serverNote && (
+        <View style={styles.notePill}>
+          <Text style={styles.noteTxt}>⚠️ {serverNote}</Text>
+        </View>
+      )}
 
       {downloads.length > 0 && (
         <TouchableOpacity style={styles.dlPill} onPress={() => nav.reset("library")}>
@@ -171,11 +230,14 @@ export default function SearchScreen({ nav }) {
         <ScrollView contentContainerStyle={{ paddingBottom: 90 }} keyboardShouldPersistTaps="handled">
           {cont.length > 0 && (
             <View style={{ marginTop: 8 }}>
-              <Text style={styles.section}>Continue Listening</Text>
+              <Text style={styles.section}>{C.contSection}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
                 {cont.map((b) => {
                   const pr = b.progress || {};
-                  const pct = pr.duration ? Math.min(100, Math.round((pr.position / pr.duration) * 100)) : 0;
+                  const pct =
+                    contentType === "comic"
+                      ? pr.totalPages ? Math.min(100, Math.round(((pr.page + 1) / pr.totalPages) * 100)) : 0
+                      : pr.duration ? Math.min(100, Math.round((pr.position / pr.duration) * 100)) : 0;
                   return (
                     <TouchableOpacity key={b.id} style={styles.contCard} onPress={() => resume(b)}>
                       <CoverArt uri={b.poster} size={120} radius={8} />
@@ -244,7 +306,7 @@ export default function SearchScreen({ nav }) {
             ) : null
           }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.row} onPress={() => nav.navigate("book", { item })}>
+            <TouchableOpacity style={styles.row} onPress={() => nav.navigate(C.detailScreen, { item })}>
               <CoverArt uri={item.poster} size={56} radius={6} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
@@ -274,6 +336,8 @@ const styles = StyleSheet.create({
   searchBtn: { backgroundColor: theme.accent, borderRadius: 10, paddingHorizontal: 18, justifyContent: "center", minWidth: 46, alignItems: "center" },
   searchBtnTxt: { color: "#fff", fontWeight: "700" },
   dlPill: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 10, marginBottom: 12 },
+  notePill: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 10, marginBottom: 12 },
+  noteTxt: { color: theme.sub, fontSize: 13, lineHeight: 18 },
   dlPillTxt: { color: theme.text, fontSize: 13, flex: 1 },
   section: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginTop: 16, marginBottom: 8 },
   sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },

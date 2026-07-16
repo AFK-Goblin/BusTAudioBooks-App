@@ -161,6 +161,26 @@ export function HomeIcon({ size = 22, color = theme.sub }) {
   );
 }
 
+// Open comic: two page panels meeting at a center fold.
+export function ComicIcon({ size = 22, color = theme.sub }) {
+  const pageW = size * 0.38;
+  const pageH = size * 0.72;
+  const stroke = Math.max(2, Math.round(size * 0.09));
+  const page = {
+    width: pageW,
+    height: pageH,
+    borderWidth: stroke,
+    borderColor: color,
+    backgroundColor: "transparent",
+  };
+  return (
+    <View style={{ width: size, height: size, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+      <View style={[page, { borderTopLeftRadius: 4, borderBottomLeftRadius: 4, borderRightWidth: stroke / 2, transform: [{ rotate: "-4deg" }] }]} />
+      <View style={[page, { borderTopRightRadius: 4, borderBottomRightRadius: 4, borderLeftWidth: stroke / 2, transform: [{ rotate: "4deg" }] }]} />
+    </View>
+  );
+}
+
 // Vertical "more" dots.
 export function DotsIcon({ size = 18, color = theme.dim }) {
   const d = Math.max(3, Math.round(size * 0.16));

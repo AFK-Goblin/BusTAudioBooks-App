@@ -10,6 +10,7 @@ import { formatBytes } from "../src/format";
 import { useSettings, setSetting, SPEED_OPTIONS, JUMP_BACK_OPTIONS, JUMP_FORWARD_OPTIONS } from "../src/settings";
 import { applyJumpIntervals, setRate } from "../src/player";
 import { downloadsSizeBytes, deleteAllDownloads } from "../src/downloads";
+import { clearComicCache, comicCacheSizeBytes } from "../src/comics";
 import { clearDownloadFlags } from "../src/library";
 import { useScreenPad } from "../src/layout";
 
@@ -21,6 +22,7 @@ export default function SettingsScreen({ nav }) {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState(null);
   const [usage, setUsage] = useState(null); // bytes, or null while loading
+  const [comicCache, setComicCache] = useState(null); // bytes of streamed-comic cache
 
   useEffect(() => {
     (async () => {
@@ -38,7 +40,9 @@ export default function SettingsScreen({ nav }) {
   }, []);
 
   const refreshUsage = useCallback(async () => {
-    setUsage(await downloadsSizeBytes());
+    const [u, c] = await Promise.all([downloadsSizeBytes(), comicCacheSizeBytes()]);
+    setUsage(u);
+    setComicCache(c);
   }, []);
   useEffect(() => { refreshUsage(); }, [refreshUsage]);
 
@@ -179,6 +183,19 @@ export default function SettingsScreen({ nav }) {
               <Divider />
               <TouchableOpacity style={styles.inlineBtn} onPress={wipeDownloads}>
                 <Text style={styles.inlineBtnTxt}>Delete all downloads</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {comicCache > 0 && (
+            <>
+              <Divider />
+              <TouchableOpacity
+                style={styles.inlineBtn}
+                onPress={async () => { await clearComicCache(); refreshUsage(); }}
+              >
+                <Text style={styles.inlineBtnTxt}>
+                  Clear comic cache ({formatBytes(comicCache)})
+                </Text>
               </TouchableOpacity>
             </>
           )}

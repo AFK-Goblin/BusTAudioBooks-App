@@ -14,7 +14,7 @@ import { cmpVersion } from "./src/version";
 import { initSettings, getSettings } from "./src/settings";
 import { resumePendingDownloads, sweepFinishedDownloads } from "./src/downloads";
 import { PlayPauseIcon, CoverArt } from "./src/ui";
-import { HomeIcon, LibraryIcon, SlidersIcon } from "./src/icons";
+import { HomeIcon, LibraryIcon, SlidersIcon, ComicIcon } from "./src/icons";
 import { STATUS_PAD, TAB_BAR_HEIGHT, LayoutContext } from "./src/layout";
 
 import SetupScreen from "./screens/SetupScreen";
@@ -23,9 +23,22 @@ import BookScreen from "./screens/BookScreen";
 import PlayerScreen from "./screens/PlayerScreen";
 import LibraryScreen from "./screens/LibraryScreen";
 import SettingsScreen from "./screens/SettingsScreen";
+import ComicsScreen from "./screens/ComicsScreen";
+import ComicScreen from "./screens/ComicScreen";
+import ReaderScreen from "./screens/ReaderScreen";
 
-const SCREENS = { setup: SetupScreen, search: SearchScreen, book: BookScreen, player: PlayerScreen, library: LibraryScreen, settings: SettingsScreen };
-const TAB_ROOTS = ["search", "library", "settings"];
+const SCREENS = {
+  setup: SetupScreen,
+  search: SearchScreen,
+  book: BookScreen,
+  player: PlayerScreen,
+  library: LibraryScreen,
+  settings: SettingsScreen,
+  comics: ComicsScreen,
+  comic: ComicScreen,
+  reader: ReaderScreen,
+};
+const TAB_ROOTS = ["search", "comics", "library", "settings"];
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -83,7 +96,7 @@ export default function App() {
         return true;
       }
       const name = s[0] && s[0].name;
-      if (name === "library" || name === "settings") {
+      if (name === "comics" || name === "library" || name === "settings") {
         reset("search");
         return true;
       }
@@ -169,7 +182,8 @@ export default function App() {
   const nav = { navigate, goBack, reset, depth: stack.length };
   const bannerVisible = otaReady || !!nativeUpdate;
   const showTabs = TAB_ROOTS.includes(top.name);
-  const showMini = top.name !== "player" && top.name !== "setup";
+  // The reader is immersive: no mini player (tabs already hide — "reader" isn't a tab root).
+  const showMini = top.name !== "player" && top.name !== "setup" && top.name !== "reader";
 
   return (
     <View style={styles.root}>
@@ -218,6 +232,7 @@ function UpdateBar({ text, action, onPress, onDismiss }) {
 
 const TABS = [
   { name: "search", label: "Home", Icon: HomeIcon },
+  { name: "comics", label: "Comics", Icon: ComicIcon },
   { name: "library", label: "Library", Icon: LibraryIcon },
   { name: "settings", label: "Settings", Icon: SlidersIcon },
 ];

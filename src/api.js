@@ -16,8 +16,10 @@ async function req(path, { timeout = 20000, prefixOverride } = {}) {
   }
 }
 
-export async function search(query, page = 1) {
-  const j = await req(`/app/search?q=${encodeURIComponent(query)}&page=${page}`);
+export async function search(query, page = 1, type = "audiobook") {
+  // Only append the param for comics so URLs to older servers stay unchanged.
+  const t = type === "comic" ? "&type=comic" : "";
+  const j = await req(`/app/search?q=${encodeURIComponent(query)}&page=${page}${t}`);
   return (j && j.results) || [];
 }
 

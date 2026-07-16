@@ -1,6 +1,6 @@
 # BusTAudio — Android app
 
-An Expo/React Native audiobook app for the [BusTAudio backend](#related-projects): search,
+An Expo/React Native audiobook **and comics** app for the [BusTAudio backend](#related-projects): search,
 **stream**, **offline download**, background playback with lock-screen controls,
 chapters, bookmarks, a sleep timer, and **Continue Listening** with saved progress.
 
@@ -20,6 +20,12 @@ BusTAudio install link (the same link they'd use in Stremio).
   configurable skip intervals that also apply to the lock-screen controls.
 - **Self-healing streams** — expired TorBox links are silently re-resolved and
   playback resumes where it was.
+- **Comics tab** — search comics/manga through your server's Jackett (category
+  7030) and read them in a vertical, webtoon-style reader: tap to toggle
+  controls, page-based **Continue Reading** progress, offline downloads through
+  the same background downloader. CBZ archives are extracted on-device
+  (streams download into cache first with a "Preparing…" progress state;
+  loose-image torrents stream page-by-page). CBR/PDF are download-only.
 - **Settings**: default speed, skip intervals, Wi-Fi-only downloads, auto-resume
   on launch, auto-delete finished downloads, storage usage + wipe, server
   connection, update checks.

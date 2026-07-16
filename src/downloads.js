@@ -24,7 +24,9 @@ const BASE = directories.documents;
 const BASE_URI = BASE.startsWith("file://") ? BASE : "file://" + BASE;
 const JKEY = "bustaudio_dljobs";
 
-function safe(s) {
+// Exported: comics.js builds its cache/extraction paths with the same rule,
+// and the two modules must agree on the on-disk name contract.
+export function safe(s) {
   return String(s).replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 80);
 }
 
@@ -215,7 +217,7 @@ export async function deleteDownload(id) {
   await FileSystem.deleteAsync(dir, { idempotent: true }).catch(() => {});
 }
 
-async function dirSize(uri) {
+export async function dirSize(uri) {
   try {
     const info = await FileSystem.getInfoAsync(uri, { size: true });
     if (!info.exists) return 0;

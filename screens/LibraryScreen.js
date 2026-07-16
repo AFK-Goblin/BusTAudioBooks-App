@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, SectionList, Alert } from "react-native";
 import { theme } from "../src/theme";
-import { continueListening, downloadedBooks, finishedBooks, getBook, removeBook } from "../src/library";
+import { continueListening, continueReading, downloadedBooks, finishedBooks, getBook, removeBook, typeOf } from "../src/library";
 import { deleteDownload, retryDownload } from "../src/downloads";
 import { useDownloads, dismissTracking } from "../src/downloadStore";
 import { loadBook } from "../src/player";
@@ -17,10 +17,12 @@ export default function LibraryScreen({ nav }) {
 
   const load = useCallback(async () => {
     const cont = await continueListening();
+    const reading = await continueReading();
     const dls = await downloadedBooks();
     const fin = await finishedBooks();
     const s = [];
     if (cont.length) s.push({ title: "Continue Listening", data: cont, kind: "continue" });
+    if (reading.length) s.push({ title: "Continue Reading", data: reading, kind: "reading" });
     if (dls.length) s.push({ title: "Downloads", data: dls, kind: "download" });
     if (fin.length) s.push({ title: "Finished", data: fin, kind: "finished" });
     setSections(s);
@@ -32,6 +34,12 @@ export default function LibraryScreen({ nav }) {
 
   async function play(book, fromStart = false) {
     const fresh = (await getBook(book.id)) || book;
+    if (typeOf(fresh) === "comic") {
+      // Comics never touch the audio player; ComicScreen owns re-opening
+      // (downloaded archive, cached pages, or a fresh TorBox resolve).
+      nav.navigate("comic", { item: fresh, resume: !fromStart });
+      return;
+    }
     if (!fresh.files || fresh.files.length === 0) {
       // Not downloaded and no cached stream URLs — send to detail to re-resolve.
       nav.navigate("book", { item: fresh });
@@ -104,13 +112,17 @@ export default function LibraryScreen({ nav }) {
           downloads.length === 0 ? (
             <View style={styles.emptyBox}>
               <NoteGlyph size={38} color={theme.border} />
-              <Text style={styles.empty}>Nothing here yet.{"\n"}Search for a book, then play it or download it for offline.</Text>
+              <Text style={styles.empty}>Nothing here yet.{"\n"}Search for a book or comic, then play/read it or download it for offline.</Text>
             </View>
           ) : null
         }
         renderItem={({ item, section }) => {
           const prog = item.progress || {};
-          const pct = prog.duration ? Math.min(100, Math.round((prog.position / prog.duration) * 100)) : 0;
+          const comic = typeOf(item) === "comic";
+          const pct = comic
+            ? prog.totalPages ? Math.min(100, Math.round(((prog.page + 1) / prog.totalPages) * 100)) : 0
+            : prog.duration ? Math.min(100, Math.round((prog.position / prog.duration) * 100)) : 0;
+          const badge = comic ? "Comic · " : "";
           return (
             <TouchableOpacity
               style={styles.row}
@@ -124,9 +136,11 @@ export default function LibraryScreen({ nav }) {
                 <Text style={styles.meta}>
                   {section.kind === "continue"
                     ? `${formatTime(prog.position)} · ${pct}%`
-                    : section.kind === "finished"
-                      ? `Finished${item.downloaded ? " · Downloaded" : ""} — tap to listen again`
-                      : item.downloaded ? "Downloaded" : ""}
+                    : section.kind === "reading"
+                      ? `Page ${(prog.page || 0) + 1}${prog.totalPages ? ` of ${prog.totalPages}` : ""} · ${pct}%`
+                      : section.kind === "finished"
+                        ? `${badge}Finished${item.downloaded ? " · Downloaded" : ""} — tap to ${comic ? "read" : "listen"} again`
+                        : item.downloaded ? `${badge}Downloaded` : badge.replace(" · ", "")}
                 </Text>
               </View>
               {item.downloaded && (

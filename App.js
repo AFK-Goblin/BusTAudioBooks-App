@@ -1,21 +1,23 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Linking, BackHandler, AppState } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 import Constants from "expo-constants";
-import TrackPlayer, { Event, State, usePlaybackState, useActiveTrack, useProgress } from "react-native-track-player";
+import { useIsPlaying, useActiveMediaItem, useProgress } from "@rntp/player";
 
 import { theme } from "./src/theme";
 import { getPrefix } from "./src/config";
-import { setupPlayer, getCurrentBook, loadBook } from "./src/player";
-import { updateProgress, continueListening } from "./src/library";
+import { checkpointPlayback, getCurrentBook, pause, play } from "./src/player";
 import { appVersion } from "./src/api";
 import { cmpVersion } from "./src/version";
-import { initSettings, getSettings } from "./src/settings";
-import { resumePendingDownloads, sweepFinishedDownloads } from "./src/downloads";
+import { getSettings, useSettings } from "./src/settings";
+import { sweepFinishedDownloads } from "./src/downloads";
+import { initializeApplication } from "./src/startup";
 import { PlayPauseIcon, CoverArt } from "./src/ui";
 import { HomeIcon, LibraryIcon, SlidersIcon, ComicIcon } from "./src/icons";
-import { STATUS_PAD, TAB_BAR_HEIGHT, LayoutContext } from "./src/layout";
+import { STATUS_PAD, LayoutContext, tabBarMetrics } from "./src/layout";
+import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 
 import SetupScreen from "./screens/SetupScreen";
 import SearchScreen from "./screens/SearchScreen";
@@ -26,6 +28,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import ComicsScreen from "./screens/ComicsScreen";
 import ComicScreen from "./screens/ComicScreen";
 import ReaderScreen from "./screens/ReaderScreen";
+import SeriesScreen from "./screens/SeriesScreen";
 
 const SCREENS = {
   setup: SetupScreen,
@@ -37,10 +40,13 @@ const SCREENS = {
   comics: ComicsScreen,
   comic: ComicScreen,
   reader: ReaderScreen,
+  series: SeriesScreen,
 };
 const TAB_ROOTS = ["search", "comics", "library", "settings"];
 
-export default function App() {
+function Application() {
+  const settings = useSettings();
+  const insets = useSafeAreaInsets();
   const [booting, setBooting] = useState(true);
   const [stack, setStack] = useState([{ name: "search" }]);
   const [otaReady, setOtaReady] = useState(false);
@@ -54,12 +60,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      await initSettings();
-      try {
-        await setupPlayer();
-      } catch (e) {
-        // surfaced on first playback if it fails
-      }
+      await initializeApplication();
       const prefix = await getPrefix();
       reset(prefix ? "search" : "setup");
       setBooting(false);
@@ -67,21 +68,6 @@ export default function App() {
       // (if enabled) free the files of books that were listened to the end.
       if (getSettings().autoDeleteFinished) {
         await sweepFinishedDownloads().catch(() => {});
-      }
-      resumePendingDownloads().catch(() => {});
-      // Auto-resume: load the most recent book paused, so the mini player is
-      // one tap from where you left off.
-      if (prefix && getSettings().autoResume) {
-        try {
-          const cont = await continueListening();
-          const b = cont[0];
-          if (b && b.files && b.files.length) {
-            const p = b.progress || {};
-            await loadBook(b, p.trackIndex || 0, p.position || 0, { play: false });
-          }
-        } catch (_) {
-          /* stale stream URLs etc. — user can still resume manually */
-        }
       }
     })();
   }, [reset]);
@@ -142,31 +128,13 @@ export default function App() {
     if (booting) return;
     runUpdateCheck();
     const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background" || state === "inactive") checkpointPlayback("app-background").catch(() => {});
       if (state === "active" && Date.now() - lastUpdateCheck.current > 60 * 60 * 1000) {
         runUpdateCheck();
       }
     });
     return () => sub.remove();
   }, [booting, runUpdateCheck]);
-
-  // Persist playback progress for Continue Listening.
-  useEffect(() => {
-    const subs = [
-      TrackPlayer.addEventListener(Event.PlaybackProgressUpdated, async (e) => {
-        const b = getCurrentBook();
-        if (!b) return;
-        let idx = 0;
-        try { idx = (await TrackPlayer.getActiveTrackIndex()) || 0; } catch (_) {}
-        await updateProgress(b.id, {
-          position: e.position,
-          duration: e.duration,
-          trackIndex: idx,
-          finished: e.duration > 0 && e.position >= e.duration - 15 && idx >= (b.files.length - 1),
-        });
-      }),
-    ];
-    return () => subs.forEach((s) => s.remove());
-  }, []);
 
   if (booting) {
     return (
@@ -181,7 +149,7 @@ export default function App() {
   const Screen = SCREENS[top.name] || SearchScreen;
   const nav = { navigate, goBack, reset, depth: stack.length };
   const bannerVisible = otaReady || !!nativeUpdate;
-  const showTabs = TAB_ROOTS.includes(top.name);
+  const showTabs = TAB_ROOTS.includes(top.name) && (top.name !== "comics" || settings.comicsEnabled);
   // The reader is immersive: no mini player (tabs already hide — "reader" isn't a tab root).
   const showMini = top.name !== "player" && top.name !== "setup" && top.name !== "reader";
 
@@ -209,9 +177,13 @@ export default function App() {
           {showMini && <MiniPlayer nav={nav} />}
         </View>
       </LayoutContext.Provider>
-      {showTabs && <TabBar current={top.name} onTab={(name) => top.name !== name && reset(name)} />}
+      {showTabs && <TabBar current={top.name} bottomInset={insets.bottom} comicsEnabled={settings.comicsEnabled} onTab={(name) => top.name !== name && reset(name)} />}
     </View>
   );
+}
+
+export default function App() {
+  return <SafeAreaProvider><AppErrorBoundary><Application /></AppErrorBoundary></SafeAreaProvider>;
 }
 
 function UpdateBar({ text, action, onPress, onDismiss }) {
@@ -237,10 +209,11 @@ const TABS = [
   { name: "settings", label: "Settings", Icon: SlidersIcon },
 ];
 
-function TabBar({ current, onTab }) {
+function TabBar({ current, onTab, comicsEnabled, bottomInset }) {
+  const metrics = tabBarMetrics(bottomInset);
   return (
-    <View style={styles.tabBar}>
-      {TABS.map(({ name, label, Icon }) => {
+    <View style={[styles.tabBar, metrics]}>
+      {TABS.filter((tab) => tab.name !== "comics" || comicsEnabled).map(({ name, label, Icon }) => {
         const active = current === name;
         const color = active ? theme.accent : theme.dim;
         return (
@@ -255,11 +228,10 @@ function TabBar({ current, onTab }) {
 }
 
 function MiniPlayer({ nav }) {
-  const track = useActiveTrack();
-  const playback = usePlaybackState();
+  const track = useActiveMediaItem();
+  const playing = useIsPlaying();
   const progress = useProgress();
   if (!track) return null;
-  const playing = playback.state === State.Playing;
   const book = getCurrentBook();
   const pct = progress.duration ? Math.min(100, (progress.position / progress.duration) * 100) : 0;
   return (
@@ -271,7 +243,7 @@ function MiniPlayer({ nav }) {
           <Text style={styles.miniSub} numberOfLines={1}>{track.title !== ((book && book.title) || "") ? track.title : track.artist || ""}</Text>
         </View>
         <TouchableOpacity
-          onPress={() => (playing ? TrackPlayer.pause() : TrackPlayer.play())}
+          onPress={() => (playing ? pause() : play())}
           style={styles.miniBtn}
         >
           <PlayPauseIcon playing={playing} size={15} />
@@ -298,7 +270,7 @@ const styles = StyleSheet.create({
   miniTrack: { height: 3, backgroundColor: theme.border },
   miniFill: { height: 3, backgroundColor: theme.accent },
   tabBar: {
-    flexDirection: "row", height: TAB_BAR_HEIGHT, backgroundColor: theme.card,
+    flexDirection: "row", backgroundColor: theme.card,
     borderTopWidth: 1, borderTopColor: theme.border,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 3 },

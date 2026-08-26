@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, ScrollView,
   StyleSheet, ActivityIndicator, Keyboard,
@@ -15,7 +15,9 @@ import { SearchIcon, CloseIcon, NoteGlyph } from "../src/icons";
 import { useScreenPad } from "../src/layout";
 
 // One screen, two content types: the Home tab renders it as audiobooks, the
-// Comics tab as comics. Everything type-specific lives in this table.
+// Comics tab as comics. Everything type-specific lives in this table; the
+// Comics tab additionally splits into two sources ("Series" = MangaDex for
+// ongoing manga/webtoons, "Torrents" = the Jackett/TorBox archive path).
 const CONTENT = {
   audiobook: {
     brand: "BusTAudioBooks",
@@ -30,30 +32,54 @@ const CONTENT = {
   },
   comic: {
     brand: "Comics",
-    placeholder: "Search comics…",
-    recentsKey: "bustaudio_recent_comics",
     contSection: "Continue Reading",
     detailScreen: "comic",
-    categories: [
-      "Manhwa", "Manga", "Superhero", "Action", "Fantasy",
-      "Romance", "Isekai", "Horror",
-    ],
+    sources: {
+      // MangaDex matches TITLES (not genres), so the browse chips are
+      // popular-series seeds rather than genre words.
+      series: {
+        placeholder: "Search manga & webtoons…",
+        recentsKey: "bustaudio_recent_manga",
+        categories: [
+          "Omniscient Reader", "One Piece", "Berserk", "Chainsaw Man",
+          "Eleceed", "Tower of God", "Kagurabachi", "Dandadan",
+        ],
+      },
+      torrents: {
+        placeholder: "Search comics…",
+        recentsKey: "bustaudio_recent_comics",
+        categories: [
+          "Manhwa", "Manga", "Superhero", "Action", "Fantasy",
+          "Romance", "Isekai", "Horror",
+        ],
+      },
+    },
   },
 };
 
 // Survives unmount: only the top screen is mounted, so without this the
 // search results vanish every time you open a book and come back.
 const emptyCache = () => ({ q: "", items: [], searched: false, page: 1, noMore: false });
-const caches = { audiobook: emptyCache(), comic: emptyCache() };
+const caches = { audiobook: emptyCache(), "comic:series": emptyCache(), "comic:torrents": emptyCache() };
+
+// The chosen comics source also survives unmount (tab switches remount us).
+let comicSourcePersist = "series";
 
 const RECENT_MAX = 8;
 
 export default function SearchScreen({ nav, contentType = "audiobook" }) {
-  const C = CONTENT[contentType] || CONTENT.audiobook;
+  const [comicSource, setComicSourceState] = useState(comicSourcePersist);
+  const base = CONTENT[contentType] || CONTENT.audiobook;
+  const C = base.sources ? { ...base, ...base.sources[comicSource] } : base;
   const CATEGORIES = C.categories;
   const RKEY = C.recentsKey;
-  const cache = caches[contentType];
-  const setCache = (next) => { caches[contentType] = next; };
+  const bucket = contentType === "comic" ? `comic:${comicSource}` : "audiobook";
+  const cache = caches[bucket];
+  const setCache = (next) => { caches[bucket] = next; };
+  // Which bucket is on screen right now — in-flight searches check this so a
+  // response for the OLD source never repaints under the new source's chip.
+  const bucketRef = useRef(bucket);
+  bucketRef.current = bucket;
   const [q, setQ] = useState(cache.q);
   const [items, setItems] = useState(cache.items);
   const [busy, setBusy] = useState(false);
@@ -67,34 +93,53 @@ export default function SearchScreen({ nav, contentType = "audiobook" }) {
   const downloads = useDownloads();
   const topPad = useScreenPad();
 
-  // The Comics tab only works when the server supports it AND has Jackett —
-  // say so up front instead of letting every search come back empty.
+  // Switching Series ⇄ Torrents swaps cache buckets in place (no refetch, no
+  // remount) — every piece of search state must be resynced from the bucket.
+  function setComicSource(source) {
+    if (source === comicSource) return;
+    comicSourcePersist = source;
+    setComicSourceState(source);
+    const c = caches[`comic:${source}`];
+    setQ(c.q); setItems(c.items); setSearched(c.searched); setNoMore(c.noMore);
+    setError(null); setServerNote(null);
+    setBusy(false); setBusyMore(false); // any in-flight search belongs to the old bucket
+  }
+
+  // Each comics source has its own server prerequisite — say so up front
+  // instead of letting every search come back empty.
   useEffect(() => {
     if (contentType !== "comic") return;
+    setServerNote(null);
     (async () => {
       try {
         const h = await health();
         const s = h && h.sources;
-        if (!s || s.comics === undefined) {
+        if (comicSource === "series") {
+          if (!s || s.mangadex === undefined) {
+            setServerNote("Your server doesn't support the Series source yet — update the BusTAudio server (v2.1+).");
+          } else if (!s.mangadex) {
+            setServerNote("The Series source is disabled on this server (MANGADEX_DISABLED).");
+          }
+        } else if (!s || s.comics === undefined) {
           setServerNote("Your server doesn't support comics yet — update the BusTAudio server to enable this tab.");
         } else if (!s.comics) {
-          setServerNote("Comics search needs Jackett/Prowlarr configured on your server (an indexer with comics, category 7030).");
+          setServerNote("Torrent comics need Jackett/Prowlarr configured on your server (an indexer with comics, category 7030).");
         }
       } catch (_) {
         /* offline — the search itself will surface the error */
       }
     })();
-  }, [contentType]);
+  }, [contentType, comicSource]);
 
   useEffect(() => {
     (async () => {
       setCont(contentType === "comic" ? await continueReading() : await continueListening());
       try {
         const r = await AsyncStorage.getItem(RKEY);
-        if (r) setRecents(JSON.parse(r));
+        setRecents(r ? JSON.parse(r) : []);
       } catch (_) {}
     })();
-  }, []);
+  }, [RKEY]);
 
   async function rememberSearch(query) {
     // Category chips aren't "searches" worth remembering.
@@ -117,31 +162,38 @@ export default function SearchScreen({ nav, contentType = "audiobook" }) {
     setBusy(true);
     setError(null);
     setSearched(true);
+    const myBucket = bucket;
     try {
-      const results = await search(query, 1, contentType);
+      const results = await search(query, 1, contentType, comicSource);
+      // Always record into the bucket this search belongs to…
+      caches[myBucket] = { q: query, items: results, searched: true, page: 1, noMore: results.length === 0 };
+      // …but only repaint if the user hasn't switched source meanwhile.
+      if (bucketRef.current !== myBucket) return;
       setItems(results);
       setNoMore(results.length === 0);
-      setCache({ q: query, items: results, searched: true, page: 1, noMore: results.length === 0 });
       if (results.length > 0) rememberSearch(query);
     } catch (e) {
+      if (bucketRef.current !== myBucket) return;
       setError(e.message || "Search failed");
       setItems([]);
     } finally {
-      setBusy(false);
+      if (bucketRef.current === myBucket) setBusy(false);
     }
-  }, [q]);
+  }, [q, comicSource, bucket]);
 
   async function loadMore() {
-    const cur = caches[contentType];
+    const myBucket = bucket;
+    const cur = caches[myBucket];
     if (busyMore || noMore || !cur.q) return;
     setBusyMore(true);
     try {
       const next = cur.page + 1;
-      const more = await search(cur.q, next, contentType);
+      const more = await search(cur.q, next, contentType, comicSource);
       const seen = new Set(cur.items.map((it) => it.id));
       const fresh = more.filter((it) => !seen.has(it.id));
       const merged = [...cur.items, ...fresh];
-      setCache({ ...cur, items: merged, page: next, noMore: fresh.length === 0 });
+      caches[myBucket] = { ...cur, items: merged, page: next, noMore: fresh.length === 0 };
+      if (bucketRef.current !== myBucket) return;
       setItems(merged);
       setNoMore(fresh.length === 0);
     } catch (_) {
@@ -153,8 +205,10 @@ export default function SearchScreen({ nav, contentType = "audiobook" }) {
 
   async function resume(book) {
     if (contentType === "comic") {
-      // ComicScreen owns re-opening (local pages, cached pages, or re-resolve).
-      nav.navigate("comic", { item: book, resume: true });
+      // Series entries resume via SeriesScreen (chapter-aware); torrent comics
+      // via ComicScreen (local pages, cached pages, or re-resolve).
+      const screen = book.provider === "mangadex" ? "series" : "comic";
+      nav.navigate(screen, { item: book, resume: true });
       return;
     }
     const p = book.progress || {};
@@ -176,6 +230,26 @@ export default function SearchScreen({ nav, contentType = "audiobook" }) {
   return (
     <View style={[styles.wrap, { paddingTop: topPad }]}>
       <Text style={styles.brand}>{C.brand}</Text>
+
+      {contentType === "comic" && (
+        <View style={styles.sourceRow}>
+          {[["series", "Series"], ["torrents", "Torrents"]].map(([key, label]) => {
+            const active = comicSource === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[styles.sourceChip, active && styles.sourceChipActive]}
+                onPress={() => setComicSource(key)}
+              >
+                <Text style={[styles.sourceChipTxt, active && styles.sourceChipTxtActive]}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          <Text style={styles.sourceHint}>
+            {comicSource === "series" ? "Ongoing · MangaDex" : "Archives · via TorBox"}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.searchRow}>
         <View style={styles.inputWrap}>
@@ -306,13 +380,20 @@ export default function SearchScreen({ nav, contentType = "audiobook" }) {
             ) : null
           }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.row} onPress={() => nav.navigate(C.detailScreen, { item })}>
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() =>
+                nav.navigate(item.provider === "mangadex" ? "series" : C.detailScreen, { item })
+              }
+            >
               <CoverArt uri={item.poster} size={56} radius={6} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
                 {item.author ? <Text style={styles.author} numberOfLines={1}>{item.author}</Text> : null}
                 <Text style={styles.meta} numberOfLines={1}>
-                  {[item.cached ? "⚡ Instant" : null, item.format, item.bitrate, item.sizeText || formatBytes(item.size)].filter(Boolean).join(" · ")}
+                  {item.provider === "mangadex"
+                    ? [item.status, item.year, "MangaDex"].filter(Boolean).join(" · ")
+                    : [item.cached ? "⚡ Instant" : null, item.format, item.bitrate, item.sizeText || formatBytes(item.size)].filter(Boolean).join(" · ")}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -338,6 +419,12 @@ const styles = StyleSheet.create({
   dlPill: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 10, marginBottom: 12 },
   notePill: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 10, marginBottom: 12 },
   noteTxt: { color: theme.sub, fontSize: 13, lineHeight: 18 },
+  sourceRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  sourceChip: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 8 },
+  sourceChipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
+  sourceChipTxt: { color: theme.sub, fontWeight: "700", fontSize: 13 },
+  sourceChipTxtActive: { color: "#fff" },
+  sourceHint: { color: theme.dim, fontSize: 11, marginLeft: "auto" },
   dlPillTxt: { color: theme.text, fontSize: 13, flex: 1 },
   section: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginTop: 16, marginBottom: 8 },
   sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },

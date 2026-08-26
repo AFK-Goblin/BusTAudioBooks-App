@@ -161,6 +161,16 @@ export default function SettingsScreen({ nav }) {
           />
         </View>
 
+        <Text style={styles.sectionHead}>Optional features</Text>
+        <View style={styles.card}>
+          <SwitchRow
+            label="Comics reader"
+            sub="Show comic search, downloads and reading tools. Turning this off keeps existing comic data."
+            value={!!settings.comicsEnabled}
+            onChange={(v) => setSetting("comicsEnabled", v)}
+          />
+        </View>
+
         <Text style={styles.sectionHead}>Downloads</Text>
         <View style={styles.card}>
           <SwitchRow
@@ -175,6 +185,13 @@ export default function SettingsScreen({ nav }) {
             sub="Free the files of finished books on next launch (progress is kept)"
             value={!!settings.autoDeleteFinished}
             onChange={(v) => setSetting("autoDeleteFinished", v)}
+          />
+          <Divider />
+          <SwitchRow
+            label="Data-saver manga pages"
+            sub="Compressed MangaDex pages — roughly half the data on the Series source"
+            value={!!settings.dataSaver}
+            onChange={(v) => setSetting("dataSaver", v)}
           />
           <Divider />
           <Row label="Storage used" value={usage == null ? "…" : formatBytes(usage) || "0 B"} />

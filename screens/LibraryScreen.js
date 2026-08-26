@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, SectionList, Alert } from "react-native";
 import { theme } from "../src/theme";
-import { continueListening, continueReading, downloadedBooks, finishedBooks, getBook, removeBook, typeOf } from "../src/library";
+import { continueListening, continueReading, downloadedBooks, finishedBooks, getLibrary, removeBook, typeOf } from "../src/library";
 import { deleteDownload, retryDownload } from "../src/downloads";
+import { sortPages } from "../src/comics";
 import { useDownloads, dismissTracking } from "../src/downloadStore";
 import { loadBook } from "../src/player";
 import { formatTime } from "../src/format";
@@ -33,10 +34,37 @@ export default function LibraryScreen({ nav }) {
   useEffect(() => { load(); }, [downloads.length, load]);
 
   async function play(book, fromStart = false) {
-    const fresh = (await getBook(book.id)) || book;
+    // One library read serves both the entry and (for chapters) its series.
+    const lib = await getLibrary();
+    const fresh = lib[book.id] || book;
     if (typeOf(fresh) === "comic") {
-      // Comics never touch the audio player; ComicScreen owns re-opening
-      // (downloaded archive, cached pages, or a fresh TorBox resolve).
+      // Downloaded MangaDex chapter → straight into the reader from disk.
+      if (fresh.kind === "chapter") {
+        const pages = sortPages((fresh.files || []).map((f) => f.uri).filter(Boolean));
+        const series = lib[fresh.seriesId] || null;
+        const startPage =
+          !fromStart && series && series.progress && series.progress.chapterId === fresh.chapterId
+            ? series.progress.page || 0
+            : 0;
+        nav.navigate("reader", {
+          entry: series || { id: fresh.seriesId, type: "comic", provider: "mangadex", title: fresh.title },
+          pages,
+          startPage,
+          md: {
+            mangaId: fresh.mangaId,
+            chapter: { id: fresh.chapterId, num: fresh.chapterNum },
+            chapters: [], // offline: no next-chapter list
+            saver: false,
+          },
+        });
+        return;
+      }
+      // MangaDex series → chapter list; torrent comics → ComicScreen.
+      // Neither ever touches the audio player.
+      if (fresh.provider === "mangadex") {
+        nav.navigate("series", { item: fresh, resume: !fromStart });
+        return;
+      }
       nav.navigate("comic", { item: fresh, resume: !fromStart });
       return;
     }

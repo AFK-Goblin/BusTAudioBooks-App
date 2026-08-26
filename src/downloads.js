@@ -11,12 +11,13 @@
 import * as FileSystem from "expo-file-system";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-  download,
-  checkForExistingDownloads,
+  createDownloadTask,
+  getExistingDownloadTasks,
   completeHandler,
   directories,
 } from "@kesha-antonov/react-native-background-downloader";
-import { upsertBook, finishedBooks, clearBookDownload } from "./library";
+import { createNativeDownload } from "./downloads/adapter";
+import { upsertBook, finishedBooks, clearBookDownload, getLibrary, removeBook } from "./library";
 import { startTracking, reportProgress, finishTracking, failTracking, dismissTracking } from "./downloadStore";
 import { getSettings } from "./settings";
 
@@ -63,26 +64,28 @@ function runTask(id, url, destination, onProgress) {
   // downloader itself, so the setting holds even with the app backgrounded.
   const wifiOnly = !!getSettings().wifiOnly;
   return new Promise((resolve, reject) => {
-    const task = download({
+    let task;
+    task = createNativeDownload(createDownloadTask, {
       id,
       url,
       destination,
       isAllowedOverMetered: !wifiOnly,
       isAllowedOverRoaming: !wifiOnly,
-    })
-      .begin(() => {})
-      .progress((a, b, c) => {
+    }, {
+      begin: () => {},
+      progress: (a, b, c) => {
         const [written, total] = parseProgress(a, b, c);
         if (onProgress) onProgress(written || 0, total || 0);
-      })
-      .done(() => {
+      },
+      done: () => {
         try { completeHandler(task.id); } catch (_) {}
         resolve();
-      })
-      .error((e) => {
+      },
+      error: (e) => {
         try { completeHandler(task.id); } catch (_) {}
         reject(new Error((e && (e.error || e.errorCode)) || "Download failed"));
-      });
+      },
+    });
   });
 }
 
@@ -199,7 +202,7 @@ export async function resumePendingDownloads() {
   if (ids.length === 0) return;
   let tasks = [];
   try {
-    tasks = await checkForExistingDownloads();
+    tasks = await getExistingDownloadTasks();
   } catch (_) {}
   const byId = new Map(tasks.map((t) => [t.id, t]));
   for (const id of ids) {
@@ -247,5 +250,20 @@ export async function sweepFinishedDownloads() {
   for (const b of done) {
     await deleteDownload(b.id);
     await clearBookDownload(b.id);
+  }
+
+  // Downloaded MangaDex chapters never carry finished:true — "finished" for a
+  // chapter means its checkmark on the series entry's readChapters map. Sweep
+  // those too, or manga downloads would accumulate forever despite the setting.
+  const lib = await getLibrary();
+  for (const b of Object.values(lib)) {
+    if (b.kind !== "chapter" || !b.downloaded) continue;
+    const series = b.seriesId && lib[b.seriesId];
+    if (series && series.readChapters && series.readChapters[b.chapterId]) {
+      await deleteDownload(b.id);
+      // Chapter entries are pure download stubs (progress lives on the series
+      // entry), so remove them entirely instead of leaving an empty husk.
+      await removeBook(b.id);
+    }
   }
 }

@@ -5,6 +5,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 
 const SKEY = "bustaudio_settings";
+const V2KEY = "bustaudio_settings_v2";
 
 export const DEFAULTS = {
   speed: 1, // default playback speed applied when a book loads
@@ -13,6 +14,8 @@ export const DEFAULTS = {
   wifiOnly: false, // downloads only on un-metered connections
   autoResume: false, // load last book (paused) on app launch
   autoDeleteFinished: false, // free downloaded files once a book is finished
+  dataSaver: false, // manga pages: MangaDex's compressed variant (~half the data)
+  comicsEnabled: false, // optional reader feature; audiobook-first by default
 };
 
 export const SPEED_OPTIONS = [0.8, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -28,7 +31,7 @@ function emit() {
 
 export async function initSettings() {
   try {
-    const s = await AsyncStorage.getItem(SKEY);
+    const s = (await AsyncStorage.getItem(V2KEY)) || (await AsyncStorage.getItem(SKEY));
     if (s) settings = { ...DEFAULTS, ...JSON.parse(s) };
   } catch (_) {
     /* corrupt/missing — keep defaults */
@@ -46,6 +49,7 @@ export async function setSetting(key, value) {
   emit();
   try {
     await AsyncStorage.setItem(SKEY, JSON.stringify(settings));
+    await AsyncStorage.setItem(V2KEY, JSON.stringify({ ...settings, schemaVersion: 2 }));
   } catch (_) {}
   return settings;
 }

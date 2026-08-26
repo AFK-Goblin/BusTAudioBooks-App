@@ -7,6 +7,11 @@ import { StatusBar, Platform } from "react-native";
 export const STATUS_PAD = Platform.OS === "android" ? StatusBar.currentHeight || 24 : 44;
 export const TAB_BAR_HEIGHT = 58;
 
+export function tabBarMetrics(bottomInset) {
+  const safeBottom = Math.max(0, bottomInset || 0);
+  return { height: TAB_BAR_HEIGHT + safeBottom, paddingBottom: safeBottom };
+}
+
 // App.js sets screenTopPad to a small value while an update banner is showing
 // (the banner already clears the status bar), and STATUS_PAD + 12 otherwise.
 export const LayoutContext = createContext({ screenTopPad: STATUS_PAD + 12 });

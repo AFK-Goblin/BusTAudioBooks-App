@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal } from "react-native";
 import Slider from "@react-native-community/slider";
-import TrackPlayer, { State, useProgress, usePlaybackState, useActiveTrack } from "react-native-track-player";
+import TrackPlayer, { useProgress, useIsPlaying, useActiveMediaItem } from "@rntp/player";
 import { theme } from "../src/theme";
 import { formatTime } from "../src/format";
-import { getCurrentBook, setRate, getRate, getSleep, setSleep, subscribeSleep } from "../src/player";
+import { getCurrentBook, setRate, getRate, getSleep, setSleep, subscribeSleep, play, pause, seekTo, seekBy, skipBy, skipToIndex } from "../src/player";
 import { Backdrop, CoverArt, PlayPauseIcon } from "../src/ui";
 import { ChevronIcon, SkipIcon, JumpIcon, DownloadIcon, CheckIcon, CloseIcon } from "../src/icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,8 +18,8 @@ const SLEEP_OPTIONS = [0, 10, 15, 30, 45, 60, "eot"];
 
 export default function PlayerScreen({ nav }) {
   const progress = useProgress();
-  const playback = usePlaybackState();
-  const track = useActiveTrack();
+  const playing = useIsPlaying();
+  const track = useActiveMediaItem();
   const book = getCurrentBook();
   const settings = useSettings();
   const topPad = useScreenPad();
@@ -32,9 +32,8 @@ export default function PlayerScreen({ nav }) {
   const [showChapters, setShowChapters] = useState(false);
   const downloads = useDownloads();
 
-  const playing = playback.state === State.Playing;
   const files = (book && book.files) || [];
-  const activeIdx = track ? parseInt(track.id, 10) || 0 : 0;
+  const activeIdx = track && track.extras ? Number(track.extras.trackIndex) || 0 : 0;
 
   // Show the REAL playback rate, not a per-mount default (it survives
   // leaving and re-entering this screen).
@@ -69,9 +68,9 @@ export default function PlayerScreen({ nav }) {
 
   async function goToBookmark(bm) {
     try {
-      if ((bm.trackIndex || 0) !== activeIdx) await TrackPlayer.skip(bm.trackIndex || 0);
-      await TrackPlayer.seekTo(bm.position || 0);
-      TrackPlayer.play();
+      if ((bm.trackIndex || 0) !== activeIdx) await skipToIndex(bm.trackIndex || 0);
+      await seekTo(bm.position || 0);
+      await play();
     } catch (_) {}
   }
 
@@ -118,6 +117,9 @@ export default function PlayerScreen({ nav }) {
   }
 
   const pos = seek != null ? seek : progress.position;
+  // duration is 0 while the track's metadata is still being read (big m4b files
+  // and streams take a beat). Guard against NaN/Infinity too.
+  const durationKnown = Number.isFinite(progress.duration) && progress.duration > 0;
 
   return (
     <View style={[styles.wrap, { paddingTop: topPad }]}>
@@ -144,36 +146,41 @@ export default function PlayerScreen({ nav }) {
           <Text style={styles.sub} numberOfLines={1}>{(book && book.author) || ""}</Text>
         )}
 
+        {/* Until the track's metadata is parsed, duration is 0. Falling back to
+            a max of 1 there pegged the bar at 100% and showed "35:03:21 / 0:00";
+            treat unknown duration as an explicit loading state instead, and
+            clamp position so a stale/overshooting seek can't fill the bar. */}
         <Slider
           style={{ width: "100%", height: 40, marginTop: 14 }}
           minimumValue={0}
-          maximumValue={progress.duration || 1}
-          value={pos}
-          minimumTrackTintColor={theme.accent}
+          maximumValue={durationKnown ? progress.duration : 1}
+          value={durationKnown ? Math.min(Math.max(pos, 0), progress.duration) : 0}
+          disabled={!durationKnown}
+          minimumTrackTintColor={durationKnown ? theme.accent : theme.border}
           maximumTrackTintColor={theme.border}
-          thumbTintColor={theme.accent}
+          thumbTintColor={durationKnown ? theme.accent : "transparent"}
           onSlidingStart={() => setSeek(progress.position)}
           onValueChange={(v) => setSeek(v)}
-          onSlidingComplete={async (v) => { await TrackPlayer.seekTo(v); setSeek(null); }}
+          onSlidingComplete={async (v) => { await seekTo(v); setSeek(null); }}
         />
         <View style={styles.times}>
-          <Text style={styles.time}>{formatTime(pos)}</Text>
-          <Text style={styles.time}>{formatTime(progress.duration)}</Text>
+          <Text style={styles.time}>{durationKnown ? formatTime(pos) : "—:—"}</Text>
+          <Text style={styles.time}>{durationKnown ? formatTime(progress.duration) : "Loading…"}</Text>
         </View>
 
         <View style={styles.controls}>
-          <TouchableOpacity style={styles.ctrl} onPress={() => TrackPlayer.skipToPrevious().catch(() => {})}>
+          <TouchableOpacity style={styles.ctrl} onPress={() => skipBy(-1).catch(() => {})}>
             <SkipIcon dir="prev" size={24} color={theme.text} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.ctrl}
-            onPress={async () => { const p = await TrackPlayer.getProgress(); TrackPlayer.seekTo(Math.max(0, p.position - settings.jumpBack)); }}
+            onPress={() => seekBy(-settings.jumpBack).catch(() => {})}
           >
             <JumpIcon dir="back" seconds={settings.jumpBack} size={40} color={theme.text} />
           </TouchableOpacity>
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={() => (playing ? TrackPlayer.pause() : TrackPlayer.play())}
+            onPress={() => (playing ? pause() : play())}
             onLongPress={dropBookmark}
           >
             <LinearGradient colors={theme.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
@@ -182,11 +189,11 @@ export default function PlayerScreen({ nav }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.ctrl}
-            onPress={async () => { const p = await TrackPlayer.getProgress(); TrackPlayer.seekTo(p.position + settings.jumpForward); }}
+            onPress={() => seekBy(settings.jumpForward).catch(() => {})}
           >
             <JumpIcon dir="forward" seconds={settings.jumpForward} size={40} color={theme.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.ctrl} onPress={() => TrackPlayer.skipToNext().catch(() => {})}>
+          <TouchableOpacity style={styles.ctrl} onPress={() => skipBy(1).catch(() => {})}>
             <SkipIcon dir="next" size={24} color={theme.text} />
           </TouchableOpacity>
         </View>
@@ -244,7 +251,7 @@ export default function PlayerScreen({ nav }) {
                 <TouchableOpacity
                   key={i}
                   style={[styles.chapter, active && styles.chapterActive]}
-                  onPress={() => TrackPlayer.skip(i).then(() => TrackPlayer.play()).catch(() => {})}
+                  onPress={() => { skipToIndex(i).then(play).catch(() => {}); }}
                 >
                   <Text style={[styles.chapterNum, active && { color: theme.accent }]}>{i + 1}</Text>
                   <Text style={[styles.chapterTitle, active && { color: theme.accent }]} numberOfLines={1}>
@@ -272,7 +279,7 @@ export default function PlayerScreen({ nav }) {
                     style={[styles.chapter, active && styles.chapterActive]}
                     onPress={() => {
                       setShowChapters(false);
-                      TrackPlayer.skip(i).then(() => TrackPlayer.play()).catch(() => {});
+                      skipToIndex(i).then(play).catch(() => {});
                     }}
                   >
                     <Text style={[styles.chapterNum, active && { color: theme.accent }]}>{i + 1}</Text>

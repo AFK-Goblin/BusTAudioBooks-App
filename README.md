@@ -1,6 +1,6 @@
 # BusTAudio — Android app
 
-An Expo/React Native audiobook **and comics** app for the [BusTAudio backend](#related-projects): search,
+An Expo/React Native audiobook app for the [BusTAudio backend](#related-projects): search,
 **stream**, **offline download**, background playback with lock-screen controls,
 chapters, bookmarks, a sleep timer, and **Continue Listening** with saved progress.
 
@@ -9,38 +9,32 @@ BusTAudio install link (the same link they'd use in Stremio).
 
 ## Features
 
-- **Home / Library / Settings** tab navigation, with a mini-player (cover art +
-  live progress) docked above the tabs.
-- **Streaming and offline downloads** — downloads run in a native background
-  downloader, survive screen-lock *and* the app being killed (they're re-attached
-  on next launch), and failed downloads stay visible with Retry/Dismiss.
-- **Player**: chapter list + quick chapter picker, bookmarks (tap "+ Bookmark" or
-  long-press play), speed control that persists as your default, sleep timer
-  (minutes or end-of-chapter) that keeps working in the background, and
-  configurable skip intervals that also apply to the lock-screen controls.
-- **Self-healing streams** — expired TorBox links are silently re-resolved and
-  playback resumes where it was.
-- **Comics tab** — two sources behind a Series/Torrents toggle. **Series
-  (MangaDex)**: ongoing manga/webtoons with real covers, a chapter list with
-  read-checkmarks, per-chapter streaming/downloads, a "Next chapter →" button
-  at the end of each chapter, chapter-aware Continue Reading, and a data-saver
-  setting. **Torrents**: finished/bundled series through your server's Jackett
-  (category 7030) resolved via TorBox. Both read in the same vertical,
-  webtoon-style reader: tap to toggle controls, page-based progress, offline
-  downloads through the same background downloader. CBZ archives are extracted
-  on-device; CBR/PDF are download-only.
-- **Settings**: default speed, skip intervals, Wi-Fi-only downloads, auto-resume
-  on launch, auto-delete finished downloads, storage usage + wipe, server
-  connection, update checks.
-- **Updates**: JS-only changes ship over-the-air via `eas update` (checked at
-  launch and on foreground, ~hourly); native changes ship as a new APK announced
-  through the backend's `/app/version` endpoint.
+- **Listening:** streaming or offline downloads (native background downloader;
+  resumes after the app is killed), real chapters for M4B/M4A and MP3 books
+  (read from the files' own markers), whole-book time left, speed per book
+  (0.5–3.5×), sleep timer (fade-out, end of chapter, bedtime auto-timer), smart
+  rewind, undo for accidental jumps, "go to time", car mode, bookmarks with
+  notes, and lock-screen / headset controls.
+- **Android Auto:** downloaded books on the car's screen; picking one resumes it.
+- **Library:** Continue Listening, Want to Listen, Downloads and Finished, as a
+  list or a cover grid, with sort, filter, foldable sections, ratings and a page
+  of every bookmark. "Download when ready" fetches books TorBox is still caching.
+- **Discovery:** the series a book belongs to and what comes next, new and
+  upcoming books in your series, and "Because you listened to…" suggestions
+  (from Audible's public catalogue, via the server).
+- **Your listening:** daily stats, streaks, an optional daily goal, time per book.
+- **Notifications** (optional): a book is ready on TorBox, or a new book in a
+  series you're listening to is out — checked in the background.
+- **Settings:** accent colours, skip intervals, Wi-Fi-only downloads, storage
+  manager, backup & restore as plain text, update checks.
+- **Updates:** JavaScript changes ship over the air with `eas update`; native
+  changes ship as a new APK announced through the server's `/app/version`.
 
 > ⚠️ **Release rule:** `app.json`'s `runtimeVersion` is pinned to the literal
-> `"3.0.0"` (the native runtime the current APKs are built with) so JS-only
+> `"3.2.0"` (the native runtime of the current APK) so JS-only
 > releases OTA to existing installs. If a release adds/changes ANY native
 > module or bumps the Expo SDK, you MUST bump `runtimeVersion` (e.g. to
-> `"3.0.0"`), build + distribute a new APK, and set `APP_LATEST_VERSION` /
+> `"3.3.0"`), build + distribute a new APK, and set `APP_LATEST_VERSION` /
 > `APP_APK_URL` on the server — publishing native-dependent JS against the old
 > runtimeVersion would hard-crash every OTA'd install.
 
@@ -67,11 +61,9 @@ The last command uploads the project, builds in the cloud, and prints a URL to
 **download the APK**. Share that URL (or the .apk) with your users. To install on
 a phone, they tap the APK and allow "install from unknown sources."
 
-> First build tip: if the build fails, it's almost always a version/native config
-> nudge. Paste the build log and it's usually a one-line fix. A common one: if the
-> log complains about the new architecture, it's already disabled here via
-> `"newArchEnabled": false` in `app.json`; if it complains it's *required*, remove
-> that line.
+> The player library (`@rntp/player`) needs React Native's New Architecture,
+> which is the default; `patches/` holds a small fix to it that `npm install`
+> applies automatically (patch-package).
 
 ## Ship an update
 
@@ -83,6 +75,10 @@ eas update --channel preview -m "what changed"
 ```
 
 Installed apps fetch it on next launch/foreground and show a "Reload" banner.
+
+> Publishing from an ARM64 Linux machine: the Hermes compiler that `eas update`
+> runs is an x86-64 binary. Point `REACT_NATIVE_OVERRIDE_HERMES_DIR` at a folder
+> whose `build/bin/hermesc` runs it through `qemu-x86_64-static`.
 
 **Native changes** (new native dependency, `app.json` native config, version
 bump): build a new APK with `eas build`, host it, and point the backend's
@@ -96,12 +92,17 @@ bump): build a new APK with `eas build`, host it, and point the backend's
 1. On first launch it asks for your **install link** — the `https://…/…/manifest.json`
    link from your server's `/configure` page. Paste it, tap Connect.
 2. **Search** → tap a book → **Stream now** or **Download for offline**.
-3. **Library** holds Continue Listening, Downloads, and Finished books.
+3. **Library** holds Continue Listening, Want to Listen, Downloads and Finished books.
+4. **Android Auto** lists apps installed outside the Play Store only after you
+   allow it once: Android Auto settings → tap **Version** ten times → ⋮ →
+   **Developer settings** → **Unknown sources**.
 
 ## How it maps to the backend
 
 - Search → `GET /<config>/app/search?q=…&page=…`
 - Play/Download → `GET /<config>/app/streams/<id>` → TorBox HTTPS file link(s)
+- Book page → `GET /<config>/app/details/<id>` (synopsis, genre, year)
+- Series → `GET /<config>/app/series/<id>`; suggestions → `GET /<config>/app/similar/<id>`
 - Update check → `GET /<config>/app/version` → `{ latestVersion, apkUrl }`
 - The install link's config blob carries the user's TorBox key + access token,
   so each user streams from their own TorBox account through your shared Jackett.
@@ -119,13 +120,23 @@ bump): build a new APK with `eas build`, host it, and point the backend's
 | `src/player.js` | Compatibility facade for existing screens; delegates all commands to the durable session |
 | `src/playback/session.ts` | Sole owner of the native queue, restoration, checkpoints, sleep, and stream recovery |
 | `src/playback/runtime.ts` | Connects the session to TrackPlayer, settings, library, API, and durable repositories |
-| `src/downloads.js` | Background downloads, resume-after-kill, storage management |
+| `src/playback/progressModel.ts` | Queue identity, finished detection, whole-book progress estimates |
+| `src/chapters/` | Embedded-chapter readers (`mp4.ts`: MP4 box walker; `id3.ts`: ID3v2 CHAP) over HTTP Range or local reads, per-book cache, navigation, lock-screen titles |
+| `src/downloads.js` | Background downloads, resume-after-kill, storage management, orphaned-folder sweep |
 | `src/downloadStore.js` | Observable in-progress download state |
-| `src/library.js` | Local library: progress, downloads, finished, bookmarks |
+| `src/waiting.js` | "Download when ready": books waiting on TorBox |
+| `src/library.js` | Local library: progress, downloads, finished, saved, ratings, bookmarks |
+| `src/series.js` / `src/releaseAlerts.js` | Series, next books, suggestions; new-release alerts |
+| `src/stats.js` | Listening time per day and per book |
+| `src/backgroundCheck.js` / `src/notify.js` | The background check and its notifications |
+| `src/playback/carBrowse.ts` | What Android Auto lists |
+| `src/backup.js` | Backup & restore as plain text |
 | `src/settings.js` | Persisted user settings store |
-| `src/theme.js` / `src/ui.js` / `src/icons.js` | Theme, shared UI, view-drawn icons |
+| `src/theme.js` / `src/ui.js` / `src/icons.js` | Theme (accent colours), shared UI, view-drawn icons |
 | `src/layout.js` | Status-bar/tab-bar metrics |
-| `screens/*` | Setup, Search, Book, Player, Library, Settings |
+| `screens/*` | Setup, Home (search), Book, Player, Car, Library, Bookmarks, Stats, Settings |
+| `plugins/withAndroidAuto.js` | Config plugin that lists the app in Android Auto |
+| `patches/` | patch-package fix for `@rntp/player` |
 
 ## Durable audiobook playback
 
@@ -155,8 +166,11 @@ npm run export:android
 ```
 
 Lint currently reports the existing warning backlog but must have zero errors.
-The repeatable phone checks are in
-`docs/testing/durable-playback-device-matrix.md`.
+
+> File access goes through `expo-file-system/legacy`. Since SDK 54 the root
+> `expo-file-system` exports of `getInfoAsync`, `deleteAsync` and friends are
+> stubs that throw at runtime; `src/__tests__/fileSystemImports.test.js` fails
+> the build if one creeps back in.
 
 ## Related projects
 

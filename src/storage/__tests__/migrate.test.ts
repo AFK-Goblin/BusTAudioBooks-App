@@ -9,16 +9,16 @@ describe("legacy storage migration", () => {
     jest.clearAllMocks();
   });
 
-  it("creates fresh defaults with Comics disabled", async () => {
+  it("creates fresh defaults", async () => {
     expect(await runStorageMigration()).toEqual({ ok: true, migrated: true, itemCount: 0 });
 
     expect(JSON.parse((await AsyncStorage.getItem(STORAGE_KEYS.settingsV2))!)).toMatchObject({
       schemaVersion: 2,
-      comicsEnabled: false,
+      smartRewind: true,
     });
   });
 
-  it("preserves audiobook progress and enables Comics when comic history exists", async () => {
+  it("preserves audiobook progress and leaves comic history behind", async () => {
     await AsyncStorage.setItem("bustaudio_settings", JSON.stringify({ speed: 1.25, wifiOnly: true }));
     await AsyncStorage.setItem("bustaudio_library", JSON.stringify({
       audio1: {
@@ -33,7 +33,7 @@ describe("legacy storage migration", () => {
       comic1: { id: "comic1", type: "comic", title: "A Comic", files: [] },
     }));
 
-    expect(await runStorageMigration()).toMatchObject({ ok: true, migrated: true, itemCount: 2 });
+    expect(await runStorageMigration()).toMatchObject({ ok: true, migrated: true, itemCount: 1 });
     const library = JSON.parse((await AsyncStorage.getItem(STORAGE_KEYS.libraryV2))!);
     const settings = JSON.parse((await AsyncStorage.getItem(STORAGE_KEYS.settingsV2))!);
 
@@ -44,7 +44,9 @@ describe("legacy storage migration", () => {
       bookmarks: [{ id: "bookmark:audio1:50:2:20", positionSeconds: 20 }],
       localResources: [{ uri: "file:///documents/book/part3.mp3" }],
     });
-    expect(settings).toMatchObject({ speed: 1.25, wifiOnly: true, comicsEnabled: true });
+    expect(library.comic1).toBeUndefined();
+    expect(settings).toMatchObject({ speed: 1.25, wifiOnly: true });
+    expect(settings).not.toHaveProperty("comicsEnabled");
   });
 
   it("is idempotent and never copies the secure prefix into AsyncStorage", async () => {

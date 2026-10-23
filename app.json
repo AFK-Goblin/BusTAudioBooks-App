@@ -2,7 +2,7 @@
   "expo": {
     "name": "BusTAudioBooks",
     "slug": "bustaudio",
-    "version": "3.0.0",
+    "version": "3.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#15101c",
@@ -11,7 +11,7 @@
     ],
     "android": {
       "package": "com.bustaudio.app",
-      "versionCode": 3,
+      "versionCode": 5,
       "backgroundColor": "#15101c",
       "permissions": [
         "INTERNET",
@@ -25,7 +25,7 @@
         "backgroundColor": "#15101c"
       }
     },
-    "runtimeVersion": "3.0.0",
+    "runtimeVersion": "3.2.0",
     "updates": {
       "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/836379ac-471a-4dd9-90d0-954f2fd42401"
@@ -49,7 +49,15 @@
           "imageWidth": 200
         }
       ],
-      "@kesha-antonov/react-native-background-downloader"
+      "@kesha-antonov/react-native-background-downloader",
+      "expo-background-task",
+      [
+        "expo-notifications",
+        {
+          "color": "#8b5cf6"
+        }
+      ],
+      "./plugins/withAndroidAuto"
     ]
   }
 }

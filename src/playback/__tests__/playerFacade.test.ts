@@ -32,3 +32,20 @@ test("maps legacy end-of-track sleep and transport commands", async () => {
   expect(mockSession.seekBy).toHaveBeenCalledWith(-5);
   expect(mockSession.skipTo).toHaveBeenCalledWith(3);
 });
+
+test("opening the book that's already loaded resumes it instead of reloading", async () => {
+  mockSession.getSnapshot.mockReturnValue({ book: { id: "book" }, status: "paused", rate: 1, sleep: { mode: "off" } } as any);
+  mockSession.loadBook.mockClear();
+  mockSession.play.mockClear();
+  await player.resumeOrLoad({ id: "book", progress: { position: 50, trackIndex: 1 } });
+  expect(mockSession.play).toHaveBeenCalled();
+  expect(mockSession.loadBook).not.toHaveBeenCalled();
+  // A different book, "from the beginning", or a broken session all load.
+  await player.resumeOrLoad({ id: "other", progress: { position: 50, trackIndex: 1 } });
+  expect(mockSession.loadBook).toHaveBeenLastCalledWith({ id: "other", progress: { position: 50, trackIndex: 1 } }, 1, 50, {});
+  await player.resumeOrLoad({ id: "book", progress: { position: 50 } }, true);
+  expect(mockSession.loadBook).toHaveBeenLastCalledWith({ id: "book", progress: { position: 50 } }, 0, 0, {});
+  mockSession.getSnapshot.mockReturnValue({ book: { id: "book" }, status: "error", rate: 1, sleep: { mode: "off" } } as any);
+  await player.resumeOrLoad({ id: "book", progress: { position: 50 } });
+  expect(mockSession.loadBook).toHaveBeenCalledTimes(3);
+});

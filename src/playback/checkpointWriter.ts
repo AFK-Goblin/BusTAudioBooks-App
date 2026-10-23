@@ -6,6 +6,8 @@ export type LibraryProgressCheckpoint = {
   trackIndex: number;
   finished: boolean;
   trackDurations?: number[];
+  // This book's own playback speed, used the next time it is opened.
+  rate?: number;
 };
 
 export type CheckpointInput = {

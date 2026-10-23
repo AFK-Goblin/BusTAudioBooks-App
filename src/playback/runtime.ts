@@ -1,6 +1,10 @@
 import { getStreams } from "../api";
+import { embeddedChapters } from "../chapters";
+import { followChapterTitles } from "../chapters/nowPlaying";
+import { followBedtime } from "./bedtime";
+import { followListening } from "../stats";
 import { checkpointAudiobookProgress, continueListening, getBook } from "../library";
-import { getSettings } from "../settings";
+import { getSettings, SLEEP_FADE_SECONDS } from "../settings";
 import { SessionRepository } from "../repositories/sessionRepository";
 import { CheckpointWriter } from "./checkpointWriter";
 import { buildPlayerConfig, buildRemoteCommands } from "./config";
@@ -35,9 +39,36 @@ export const playbackSession = new PlaybackSession({
     return buildRemoteCommands(settings.jumpForward, settings.jumpBack);
   },
   defaultRate: () => getSettings().speed || 1,
+  smartRewind: () => getSettings().smartRewind !== false,
   resolveStreams: async (bookId) => {
     const result = await getStreams(bookId);
     if (!result?.ready || !Array.isArray(result.streams)) return [];
-    return result.streams.map((stream: any) => ({ title: stream.title, filename: stream.filename, url: stream.url }));
+    return result.streams.map((stream: any) => ({
+      title: stream.title, filename: stream.filename, url: stream.url,
+      ...(stream.size > 0 ? { size: stream.size } : {}),
+    }));
   },
 });
+
+// Android Auto's list of books (see carBrowse.ts).
+export function setCarBrowseTree(categories: unknown[]): void {
+  nativePlayer.setBrowseTree?.(categories);
+}
+
+// Chapter names on the lock screen / notification, for books that have them.
+followChapterTitles({
+  subscribe: (listener) => playbackSession.subscribe(listener),
+  chaptersFor: embeddedChapters,
+  updateMetadata: async (index, metadata) => { await nativePlayer.updateMetadata?.(index, metadata); },
+});
+
+// Optional bedtime sleep timer (Settings → Playback).
+followBedtime({
+  subscribe: (listener) => playbackSession.subscribe(listener),
+  settings: getSettings,
+  setSleep: (minutes, options) => playbackSession.setSleep(minutes, options),
+  fadeOutSeconds: SLEEP_FADE_SECONDS,
+});
+
+// Listening time per day, for the Library's stats line.
+followListening({ subscribe: (listener) => playbackSession.subscribe(listener) });

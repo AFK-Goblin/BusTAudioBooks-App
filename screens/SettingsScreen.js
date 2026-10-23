@@ -1,18 +1,25 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Linking, ScrollView, Switch } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Linking, ScrollView, Switch, Share } from "react-native";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
-import { theme } from "../src/theme";
+import { theme, ACCENTS, appliedAccent, storedAccent, saveAccent } from "../src/theme";
 import { getPrefix, clearPrefix } from "../src/config";
 import { appVersion } from "../src/api";
 import { cmpVersion } from "../src/version";
-import { formatBytes } from "../src/format";
-import { useSettings, setSetting, SPEED_OPTIONS, JUMP_BACK_OPTIONS, JUMP_FORWARD_OPTIONS } from "../src/settings";
+import { formatBytes, formatSpeed } from "../src/format";
+import {
+  useSettings, setSetting, SPEED_OPTIONS, JUMP_BACK_OPTIONS, JUMP_FORWARD_OPTIONS, BEDTIME_START_OPTIONS, BEDTIME_MINUTE_OPTIONS,
+  DAILY_GOAL_OPTIONS,
+} from "../src/settings";
 import { applyJumpIntervals, setRate } from "../src/player";
-import { downloadsSizeBytes, deleteAllDownloads } from "../src/downloads";
-import { clearComicCache, comicCacheSizeBytes } from "../src/comics";
+import { downloadsSizeBytes, deleteAllDownloads, downloadSizes } from "../src/downloads";
+import { freeDownload } from "../src/freeDownload";
 import { clearDownloadFlags } from "../src/library";
 import { useScreenPad } from "../src/layout";
+import { buildBackup, restoreBackup } from "../src/backup";
+import { Sheet, CoverArt } from "../src/ui";
+import { WhatsNewSheet } from "../src/components/WhatsNewSheet";
+import { notificationsAllowed } from "../src/notify";
 
 export default function SettingsScreen({ nav }) {
   const version = (Constants.expoConfig && Constants.expoConfig.version) || "?";
@@ -22,7 +29,11 @@ export default function SettingsScreen({ nav }) {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState(null);
   const [usage, setUsage] = useState(null); // bytes, or null while loading
-  const [comicCache, setComicCache] = useState(null); // bytes of streamed-comic cache
+  const [restoring, setRestoring] = useState(false);
+  const [restoreText, setRestoreText] = useState("");
+  const [accentChoice, setAccentChoice] = useState(storedAccent);
+  const [whatsNew, setWhatsNew] = useState(false);
+  const [sizes, setSizes] = useState(null); // "loading" | [{ entry, bytes }] while the manager is open
 
   useEffect(() => {
     (async () => {
@@ -40,9 +51,7 @@ export default function SettingsScreen({ nav }) {
   }, []);
 
   const refreshUsage = useCallback(async () => {
-    const [u, c] = await Promise.all([downloadsSizeBytes(), comicCacheSizeBytes()]);
-    setUsage(u);
-    setComicCache(c);
+    setUsage(await downloadsSizeBytes());
   }, []);
   useEffect(() => { refreshUsage(); }, [refreshUsage]);
 
@@ -55,6 +64,26 @@ export default function SettingsScreen({ nav }) {
   async function setJump(key, v) {
     await setSetting(key, v);
     applyJumpIntervals().catch(() => {});
+  }
+
+  // Downloads by size, so the biggest can go first.
+  function manageDownloads() {
+    setSizes("loading");
+    downloadSizes().then(setSizes).catch(() => setSizes([]));
+  }
+
+  function confirmFree(entry) {
+    Alert.alert("Delete download?", `Free the space used by "${entry.title}"? Your progress and bookmarks are kept.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive",
+        onPress: async () => {
+          await freeDownload(entry.id);
+          setSizes((list) => (Array.isArray(list) ? list.filter((item) => item.entry.id !== entry.id) : list));
+          refreshUsage();
+        },
+      },
+    ]);
   }
 
   function wipeDownloads() {
@@ -105,11 +134,34 @@ export default function SettingsScreen({ nav }) {
         return;
       }
       setStatus("You're on the latest version.");
-    } catch (e) {
+    } catch (_) {
       setStatus("Couldn't check right now. Try again later.");
     } finally {
       setChecking(false);
     }
+  }
+
+  async function shareBackup() {
+    try {
+      await Share.share({ title: "BusTAudio backup", message: await buildBackup() });
+    } catch (e) {
+      Alert.alert("Couldn't make a backup", e.message || "Try again.");
+    }
+  }
+
+  async function runRestore() {
+    try {
+      const { added, updated } = await restoreBackup(restoreText);
+      setRestoring(false);
+      Alert.alert("Backup restored", `${added} book${added === 1 ? "" : "s"} added, ${updated} updated. Books play again once your server resolves them.`);
+    } catch (e) {
+      Alert.alert("Couldn't restore", e.message || "Something went wrong.");
+    }
+  }
+
+  function pickAccent(key) {
+    saveAccent(key);
+    setAccentChoice(key);
   }
 
   function changeServer() {
@@ -130,10 +182,13 @@ export default function SettingsScreen({ nav }) {
         <Text style={styles.sectionHead}>Playback</Text>
         <View style={styles.card}>
           <Text style={styles.label}>Default speed</Text>
+          <Text style={styles.labelSub}>For books you haven’t started — each book remembers its own speed.</Text>
           <ChipRow
-            options={SPEED_OPTIONS}
+            options={SPEED_OPTIONS.some((v) => Math.abs(v - settings.speed) < 0.001)
+              ? SPEED_OPTIONS
+              : [...SPEED_OPTIONS, settings.speed].sort((a, b) => a - b)}
             value={settings.speed}
-            format={(v) => `${v}×`}
+            format={formatSpeed}
             onSelect={setSpeed}
           />
           <Divider />
@@ -159,15 +214,108 @@ export default function SettingsScreen({ nav }) {
             value={!!settings.autoResume}
             onChange={(v) => setSetting("autoResume", v)}
           />
+          <Divider />
+          <SwitchRow
+            label="Smart rewind"
+            sub="Step back a few seconds when you resume after a pause — the longer the pause, the more (up to 20 s), and a full minute after a sleep timer"
+            value={settings.smartRewind !== false}
+            onChange={(v) => setSetting("smartRewind", v)}
+          />
+          <Divider />
+          <SwitchRow
+            label="Fade out sleep timer"
+            sub="Lower the volume over a timer's last 30 seconds instead of stopping abruptly"
+            value={settings.sleepFade !== false}
+            onChange={(v) => setSetting("sleepFade", v)}
+          />
+          <Divider />
+          <SwitchRow
+            label="Bedtime sleep timer"
+            sub={`Start a ${settings.bedtimeMinutes || 30}-minute sleep timer whenever you start listening between ${hourLabel(settings.bedtimeStart ?? 22)} and 6 am`}
+            value={!!settings.bedtimeTimer}
+            onChange={(v) => setSetting("bedtimeTimer", v)}
+          />
+          {settings.bedtimeTimer ? (
+            <>
+              <Text style={styles.label}>Starting at</Text>
+              <ChipRow
+                options={BEDTIME_START_OPTIONS}
+                value={settings.bedtimeStart ?? 22}
+                format={hourLabel}
+                onSelect={(v) => setSetting("bedtimeStart", v)}
+              />
+              <Text style={styles.label}>Timer length</Text>
+              <ChipRow
+                options={BEDTIME_MINUTE_OPTIONS}
+                value={settings.bedtimeMinutes || 30}
+                format={(v) => `${v} min`}
+                onSelect={(v) => setSetting("bedtimeMinutes", v)}
+              />
+            </>
+          ) : null}
         </View>
 
-        <Text style={styles.sectionHead}>Optional features</Text>
+        <Text style={styles.sectionHead}>Appearance</Text>
+        <View style={styles.card}>
+          <Text style={styles.label}>Accent colour</Text>
+          <View style={styles.swatches}>
+            {Object.entries(ACCENTS).map(([key, a]) => {
+              const active = accentChoice === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={styles.swatchWrap}
+                  onPress={() => pickAccent(key)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${a.name} accent`}
+                  accessibilityState={{ selected: active }}
+                >
+                  <View style={[styles.swatch, { backgroundColor: a.accent }, active && styles.swatchActive]} />
+                  <Text style={[styles.swatchTxt, active && { color: theme.text }]}>{a.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {accentChoice !== appliedAccent ? (
+            <>
+              <Divider />
+              <TouchableOpacity style={styles.inlineBtn} onPress={() => Updates.reloadAsync().catch(() => {})}>
+                <Text style={[styles.inlineBtnTxt, { color: ACCENTS[accentChoice].accent }]}>Restart the app to apply {ACCENTS[accentChoice].name}</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
+        </View>
+
+        <Text style={styles.sectionHead}>Listening</Text>
+        <View style={styles.card}>
+          <Text style={styles.label}>Daily goal</Text>
+          <Text style={styles.labelSub}>Minutes a day to aim for — tracked in your listening stats and Library.</Text>
+          <ChipRow
+            options={DAILY_GOAL_OPTIONS}
+            value={settings.dailyGoal || 0}
+            format={(v) => (v ? `${v} min` : "Off")}
+            onSelect={(v) => setSetting("dailyGoal", v)}
+          />
+          <Divider />
+          <TouchableOpacity style={styles.inlineBtn} onPress={() => nav.navigate("stats")}>
+            <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>Listening stats ›</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.sectionHead}>Notifications</Text>
         <View style={styles.card}>
           <SwitchRow
-            label="Comics reader"
-            sub="Show comic search, downloads and reading tools. Turning this off keeps existing comic data."
-            value={!!settings.comicsEnabled}
-            onChange={(v) => setSetting("comicsEnabled", v)}
+            label="Ready on TorBox"
+            sub="When a book you chose to download when ready has been fetched (the app checks about every half hour)"
+            value={settings.notifyReady !== false}
+            onChange={(v) => { setSetting("notifyReady", v); if (v) notificationsAllowed(true).catch(() => {}); }}
+          />
+          <Divider />
+          <SwitchRow
+            label="New books in your series"
+            sub="When the next book of a series you're listening to comes out (checked once a day)"
+            value={settings.notifyReleases !== false}
+            onChange={(v) => { setSetting("notifyReleases", v); if (v) notificationsAllowed(true).catch(() => {}); }}
           />
         </View>
 
@@ -187,35 +335,35 @@ export default function SettingsScreen({ nav }) {
             onChange={(v) => setSetting("autoDeleteFinished", v)}
           />
           <Divider />
-          <SwitchRow
-            label="Data-saver manga pages"
-            sub="Compressed MangaDex pages — roughly half the data on the Series source"
-            value={!!settings.dataSaver}
-            onChange={(v) => setSetting("dataSaver", v)}
-          />
-          <Divider />
           <Row label="Storage used" value={usage == null ? "…" : formatBytes(usage) || "0 B"} />
           {usage > 0 && (
             <>
+              <Divider />
+              <TouchableOpacity style={styles.inlineBtn} onPress={manageDownloads}>
+                <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>Manage downloads ›</Text>
+              </TouchableOpacity>
               <Divider />
               <TouchableOpacity style={styles.inlineBtn} onPress={wipeDownloads}>
                 <Text style={styles.inlineBtnTxt}>Delete all downloads</Text>
               </TouchableOpacity>
             </>
           )}
-          {comicCache > 0 && (
-            <>
-              <Divider />
-              <TouchableOpacity
-                style={styles.inlineBtn}
-                onPress={async () => { await clearComicCache(); refreshUsage(); }}
-              >
-                <Text style={styles.inlineBtnTxt}>
-                  Clear comic cache ({formatBytes(comicCache)})
-                </Text>
-              </TouchableOpacity>
-            </>
-          )}
+        </View>
+
+        <Text style={styles.sectionHead}>Backup</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardNote}>
+            Your progress, bookmarks and stats live only on this phone. Save a backup to Drive, email or notes,
+            and paste it back in after a reinstall or on a new phone.
+          </Text>
+          <Divider />
+          <TouchableOpacity style={styles.inlineBtn} onPress={shareBackup}>
+            <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>Back up library…</Text>
+          </TouchableOpacity>
+          <Divider />
+          <TouchableOpacity style={styles.inlineBtn} onPress={() => { setRestoreText(""); setRestoring(true); }}>
+            <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>Restore from a backup…</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionHead}>Server</Text>
@@ -233,6 +381,10 @@ export default function SettingsScreen({ nav }) {
           <Divider />
           <Row label="Update" value={Updates.updateId ? String(Updates.updateId).slice(0, 8) : "embedded"} />
           <Divider />
+          <TouchableOpacity style={styles.inlineBtn} onPress={() => setWhatsNew(true)}>
+            <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>{"What's new"}</Text>
+          </TouchableOpacity>
+          <Divider />
           <TouchableOpacity style={styles.inlineBtn} onPress={checkUpdates} disabled={checking}>
             {checking
               ? <ActivityIndicator color={theme.accent} size="small" />
@@ -246,8 +398,54 @@ export default function SettingsScreen({ nav }) {
           install link on this device.
         </Text>
       </ScrollView>
+
+      <WhatsNewSheet visible={whatsNew} onClose={() => setWhatsNew(false)} />
+
+      <Sheet visible={sizes != null} onClose={() => setSizes(null)} title="Downloads by size" maxHeight={480}>
+        {sizes === "loading" ? <ActivityIndicator color={theme.accent} style={{ marginVertical: 20 }} /> : null}
+        {Array.isArray(sizes) && sizes.length === 0 ? <Text style={styles.sheetNote}>No downloaded books.</Text> : null}
+        {(Array.isArray(sizes) ? sizes : []).map(({ entry, bytes }) => (
+          <View key={entry.id} style={styles.dlRow}>
+            <CoverArt uri={entry.poster} size={40} radius={6} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowValue} numberOfLines={1}>{entry.title}</Text>
+              <Text style={styles.rowSub}>
+                {formatBytes(bytes) || "0 B"}{entry.progress && entry.progress.finished ? " · finished" : ""}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => confirmFree(entry)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={`Delete download of ${entry.title}`}>
+              <Text style={styles.deleteTxt}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </Sheet>
+
+      <Sheet visible={restoring} onClose={() => setRestoring(false)} title="Restore from a backup">
+        <Text style={styles.sheetNote}>
+          Paste the whole backup text. Books you already have keep whichever progress is newer; bookmarks are combined.
+        </Text>
+        <TextInput
+          style={styles.restoreInput}
+          value={restoreText}
+          onChangeText={setRestoreText}
+          placeholder='{"format":"bustaudio-backup", …}'
+          placeholderTextColor={theme.dim}
+          multiline
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        <TouchableOpacity style={[styles.restoreBtn, !restoreText.trim() && { opacity: 0.4 }]} disabled={!restoreText.trim()} onPress={runRestore}>
+          <Text style={styles.restoreBtnTxt}>Restore</Text>
+        </TouchableOpacity>
+      </Sheet>
     </View>
   );
+}
+
+function hourLabel(hour) {
+  if (hour === 0) return "midnight";
+  if (hour === 12) return "noon";
+  return hour < 12 ? `${hour} am` : `${hour - 12} pm`;
 }
 
 function Row({ label, value }) {
@@ -267,6 +465,7 @@ function SwitchRow({ label, sub, value, onChange }) {
         {sub ? <Text style={styles.rowSub}>{sub}</Text> : null}
       </View>
       <Switch
+        accessibilityLabel={label}
         value={value}
         onValueChange={onChange}
         trackColor={{ false: theme.border, true: theme.accent2 }}
@@ -309,7 +508,13 @@ const styles = StyleSheet.create({
   rowValue: { color: theme.text, fontWeight: "600", flexShrink: 1 },
   rowSub: { color: theme.dim, fontSize: 12, marginTop: 2 },
   divider: { height: 1, backgroundColor: theme.border },
+  swatches: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 14 },
+  swatchWrap: { alignItems: "center", gap: 6, minWidth: 52 },
+  swatch: { width: 34, height: 34, borderRadius: 17, borderWidth: 2, borderColor: "transparent" },
+  swatchActive: { borderColor: "#fff", transform: [{ scale: 1.1 }] },
+  swatchTxt: { color: theme.dim, fontSize: 11, fontWeight: "600" },
   label: { color: theme.sub, marginTop: 12 },
+  labelSub: { color: theme.dim, fontSize: 12, marginTop: 2 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingVertical: 12 },
   chip: { backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 7 },
   chipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
@@ -317,6 +522,16 @@ const styles = StyleSheet.create({
   chipTxtActive: { color: "#fff" },
   inlineBtn: { paddingVertical: 13, alignItems: "flex-start" },
   inlineBtnTxt: { color: theme.warn, fontWeight: "600" },
+  cardNote: { color: theme.dim, fontSize: 12, lineHeight: 17, paddingVertical: 12 },
+  sheetNote: { color: theme.dim, fontSize: 12, marginBottom: 10, paddingHorizontal: 4 },
+  restoreInput: {
+    color: theme.text, backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 10,
+    padding: 12, height: 140, textAlignVertical: "top", fontSize: 12, marginHorizontal: 4,
+  },
+  restoreBtn: { backgroundColor: theme.accent, borderRadius: 10, paddingVertical: 12, alignItems: "center", marginTop: 12, marginHorizontal: 4 },
+  restoreBtnTxt: { color: "#fff", fontWeight: "700" },
   status: { color: theme.dim, textAlign: "center", marginTop: 12 },
+  dlRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.border },
+  deleteTxt: { color: theme.danger, fontWeight: "700" },
   foot: { color: theme.dim, fontSize: 12, textAlign: "center", marginTop: 24, lineHeight: 18 },
 });

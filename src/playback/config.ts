@@ -25,11 +25,26 @@ export function buildRemoteCommands(forwardInterval: number, backwardInterval: n
   };
 }
 
+const AUDIO_FILENAME = /\.(mp3|m4a|m4b|mp4|aac|flac|ogg|oga|opus|wav|wma)$/i;
+
+// What the notification / lock screen shows for one part. Server titles are
+// often bare filenames ("Book_Name.m4b"): a single-file book shows the book
+// title instead, and multi-part books lose the extension.
+export function partTitle(book: Pick<Book, "title">, file: BookFile, index: number, count: number): string {
+  const raw = (file.title || "").trim();
+  const fallback = `${book.title} — Part ${index + 1}`;
+  if (!raw) return fallback;
+  if (!AUDIO_FILENAME.test(raw)) return raw;
+  if (count === 1) return book.title;
+  return raw.replace(AUDIO_FILENAME, "").replace(/_+/g, " ").trim() || fallback;
+}
+
 export function buildMediaItems(book: Book) {
-  return (book.files ?? []).map((file, index) => ({
+  const files = book.files ?? [];
+  return files.map((file, index) => ({
     mediaId: `${book.id}:${index}`,
     url: file.uri || file.url || "",
-    title: file.title || `${book.title} — Part ${index + 1}`,
+    title: partTitle(book, file, index, files.length),
     artist: book.author || "BusTAudio",
     albumTitle: book.title,
     ...(book.poster ? { artworkUrl: book.poster } : {}),

@@ -12,7 +12,7 @@ jest.mock("@rntp/player", () => ({
 }));
 
 // eslint-disable-next-line import/first
-import { createNativePlayerPort } from "../nativePlayer";
+import { createNativePlayerPort, waitUntilConnected } from "../nativePlayer";
 
 function harness() {
   const remove = jest.fn();
@@ -49,6 +49,17 @@ test("translates native player reads and commands", async () => {
   expect(player.sleepAfterTime).toHaveBeenCalledWith(60);
   expect(player.sleepAfterMediaItemAtIndex).toHaveBeenCalledWith(1);
   expect(player.cancelSleepTimer).toHaveBeenCalled();
+  await port.sleepAfterTime(600, 30);
+  expect(player.sleepAfterTime).toHaveBeenLastCalledWith(600, { fadeOutSeconds: 30 });
+});
+
+test("reads the native sleep timer so a reloaded UI can show it", async () => {
+  const { port, player } = harness();
+  expect(await port.getSleepTimer?.()).toBeNull();
+  (player as any).getSleepTimer = jest.fn(() => ({ type: "time", remainingSeconds: 90, fadeOutSeconds: 30 }));
+  expect(await port.getSleepTimer?.()).toEqual({ type: "time", remainingSeconds: 90, fadeOutSeconds: 30 });
+  (player as any).getSleepTimer = jest.fn(() => ({ type: "mediaItem", index: 2 }));
+  expect(await port.getSleepTimer?.()).toEqual({ type: "mediaItem", index: 2 });
 });
 
 test("maps subscriptions and returns a stable unsubscribe callback", () => {
@@ -64,4 +75,51 @@ test("normalizes unknown native states", async () => {
   const { port, player } = harness();
   player.getPlaybackState.mockReturnValue("mystery");
   expect(await port.getState()).toBe("idle");
+});
+
+describe("connecting to the playback service", () => {
+  // Like RNTP on a cold start: getters report an unconnected, empty player
+  // (duration exactly 0) until the MediaController connects.
+  function connectingPlayer(connectAfterPolls: number) {
+    let polls = 0;
+    const connected = () => polls > connectAfterPolls;
+    return {
+      setupPlayer: jest.fn(),
+      getProgress: jest.fn(() => {
+        polls++;
+        return connected() ? { position: 0, duration: -9223372036854775.807 } : { position: 0, duration: 0 };
+      }),
+      getQueue: jest.fn(() => []),
+      getPlaybackState: jest.fn(() => "idle"),
+    };
+  }
+
+  test("setup waits until the player can actually take commands", async () => {
+    const player = connectingPlayer(3);
+    const port = createNativePlayerPort(player as any, {} as any);
+    await port.setup({});
+    expect(player.getProgress).toHaveBeenCalledTimes(4);
+  });
+
+  test("an already-live player (a queue, or real progress) counts as connected", async () => {
+    expect(await waitUntilConnected({ getProgress: () => ({ position: 5, duration: 300 }) } as any, 0)).toBe(true);
+    expect(await waitUntilConnected({ getProgress: () => ({ position: 0, duration: 0 }), getQueue: () => [{ mediaId: "b:0" }] } as any, 0)).toBe(true);
+  });
+
+  test("setup gives up waiting after a few seconds instead of hanging", async () => {
+    jest.useFakeTimers();
+    try {
+      const player = connectingPlayer(Number.POSITIVE_INFINITY);
+      const port = createNativePlayerPort(player as any, {} as any);
+      let done = false;
+      const setup = port.setup({}).then(() => { done = true; });
+      await jest.advanceTimersByTimeAsync(4_900);
+      expect(done).toBe(false);
+      await jest.advanceTimersByTimeAsync(200);
+      await setup;
+      expect(done).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

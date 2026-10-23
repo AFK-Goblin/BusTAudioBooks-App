@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, StyleSheet, ActivityIndicator } from "react-native";
 import { theme } from "../src/theme";
 import { parseInstallLink, savePrefix } from "../src/config";
 import { health } from "../src/api";
@@ -30,7 +30,8 @@ export default function SetupScreen({ nav }) {
         return;
       }
     } catch (e) {
-      setError(e.message || "Could not reach the server.");
+      const offline = /^Can't reach/.test(e.message || "");
+      setError(offline ? "Couldn't reach that server. Check the link and your connection." : e.message || "Could not reach the server.");
     } finally {
       setBusy(false);
     }
@@ -52,7 +53,7 @@ export default function SetupScreen({ nav }) {
         multiline
       />
       <Text style={styles.hint}>
-        This is the same link you'd install in Stremio — get it from the server's /configure page.
+        This is the same link you’d install in Stremio — get it from the server’s /configure page.
       </Text>
 
       {error ? <Text style={styles.err}>{error}</Text> : null}

@@ -14,13 +14,33 @@ export const DEFAULTS = {
   wifiOnly: false, // downloads only on un-metered connections
   autoResume: false, // load last book (paused) on app launch
   autoDeleteFinished: false, // free downloaded files once a book is finished
-  dataSaver: false, // manga pages: MangaDex's compressed variant (~half the data)
-  comicsEnabled: false, // optional reader feature; audiobook-first by default
+  smartRewind: true, // step back a few seconds when resuming after a pause
+  sleepFade: true, // sleep timers fade out over their last 30 seconds
+  bedtimeTimer: false, // listening started late at night arms a sleep timer
+  bedtimeStart: 22, // hour the bedtime window opens (it closes at 06:00)
+  bedtimeMinutes: 30, // length of that automatic timer
+  instantOnly: false, // search results: only torrents TorBox has cached
+  showRemaining: false, // player: right-hand time shows time left, not length
+  librarySort: "recent", // "recent" | "title" | "author"
+  scrubScope: "chapter", // player slider with embedded chapters: "chapter" | "book"
+  dailyGoal: 0, // minutes of listening a day to aim for; 0 = no goal
+  libraryCollapsed: [], // Library sections folded away: "continue" | "saved" | "download" | "finished"
+  libraryView: "list", // "list" | "grid" (covers, three across)
+  notifyReady: true, // notify when a book you're waiting on is ready on TorBox
+  notifyReleases: true, // notify when a new book in a series you're reading comes out
 };
 
 export const SPEED_OPTIONS = [0.8, 1, 1.1, 1.25, 1.5, 1.75, 2];
+// The player's speed sheet: presets plus a 0.05 stepper within these bounds.
+export const SPEED_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+export const SPEED_MIN = 0.5;
+export const SPEED_MAX = 3.5;
+export const SLEEP_FADE_SECONDS = 30;
+export const BEDTIME_START_OPTIONS = [20, 21, 22, 23, 0];
+export const BEDTIME_MINUTE_OPTIONS = [15, 30, 45, 60];
 export const JUMP_BACK_OPTIONS = [10, 15, 30, 60];
 export const JUMP_FORWARD_OPTIONS = [15, 30, 45, 60];
+export const DAILY_GOAL_OPTIONS = [0, 15, 30, 45, 60, 90];
 
 let settings = { ...DEFAULTS };
 const listeners = new Set();
@@ -32,7 +52,11 @@ function emit() {
 export async function initSettings() {
   try {
     const s = (await AsyncStorage.getItem(V2KEY)) || (await AsyncStorage.getItem(SKEY));
-    if (s) settings = { ...DEFAULTS, ...JSON.parse(s) };
+    if (s) {
+      // Settings of the removed comics feature are dropped, not re-saved.
+      const { comicsEnabled: _comics, dataSaver: _saver, ...stored } = JSON.parse(s);
+      settings = { ...DEFAULTS, ...stored };
+    }
   } catch (_) {
     /* corrupt/missing — keep defaults */
   }

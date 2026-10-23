@@ -5,6 +5,7 @@ node_modules/
 .expo/
 dist/
 dist-check/
+docs/
 web-build/
 expo-env.d.ts
 .tmp-export*/

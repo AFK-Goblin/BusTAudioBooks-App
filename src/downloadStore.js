@@ -26,12 +26,18 @@ export function startTracking(id, meta) {
     poster: meta.poster,
     i: 0,
     count: meta.count || 1,
-    pct: 0,
+    pct: 0, // whole book, not the current file
     status: "downloading",
     book: meta.book,
     files: meta.files,
+    // Per-file sizes from the server, when it reports them (2.2+).
+    sizes: (meta.files || []).map((f) => (f && f.size > 0 ? f.size : 0)),
   };
   emit();
+}
+
+function sum(values) {
+  return values.reduce((total, v) => total + v, 0);
 }
 
 export function reportProgress(id, i, count, written, total) {
@@ -39,7 +45,17 @@ export function reportProgress(id, i, count, written, total) {
   if (!a) return;
   a.i = i;
   a.count = count;
-  if (total) a.pct = Math.round((written / total) * 100);
+  const sizes = a.sizes || [];
+  if (sizes.length === count && sizes.every((s) => s > 0)) {
+    // Exact: bytes of finished files plus this one's.
+    a.bytesTotal = sum(sizes);
+    a.bytesDone = Math.min(a.bytesTotal, sum(sizes.slice(0, i)) + (written || 0));
+    a.pct = Math.floor((a.bytesDone / a.bytesTotal) * 100);
+  } else {
+    // Without sizes every file weighs the same.
+    const fraction = total ? Math.min(1, (written || 0) / total) : 0;
+    a.pct = Math.floor(((i + fraction) / Math.max(1, count)) * 100);
+  }
   emit();
 }
 

@@ -1,20 +1,49 @@
 diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
-index 9120777..1af63cb 100644
+index 9120777..7537651 100644
 --- a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
 +++ b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
-@@ -37,6 +37,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+@@ -35,8 +35,11 @@ import androidx.media3.exoplayer.ExoPlayer
+ import androidx.media3.exoplayer.hls.offline.HlsDownloader
+ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
  import androidx.media3.exoplayer.source.MediaSource
++import androidx.media3.extractor.DefaultExtractorsFactory
++import androidx.media3.extractor.ts.AdtsExtractor
  import java.io.File
  import androidx.media3.session.DefaultMediaNotificationProvider
 +import androidx.media3.session.CommandButton
  import androidx.media3.session.LibraryResult
  import androidx.media3.session.MediaLibraryService
  import androidx.media3.session.MediaSession
-@@ -231,6 +232,24 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+@@ -111,6 +114,11 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+     )
+     val upstreamFactory: DataSource.Factory = DefaultDataSource.Factory(this, httpFactory)
+ 
++    // Raw AAC (including files mislabeled .mp4) has no seek index. For known-size
++    // files, estimate duration and seek positions from the average ADTS frame size.
++    val extractorsFactory = DefaultExtractorsFactory()
++      .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
++
+     val mediaSourceFactory: MediaSource.Factory = config.cacheMaxSizeBytes?.let { maxBytes ->
+       val cacheDir = File(cacheDir, "trackplayer_cache")
+       val evictor = LeastRecentlyUsedCacheEvictor(maxBytes)
+@@ -124,10 +132,10 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+       // the LRU); non-live tracks read/write through it. When caching is off,
+       // every track uses the bare upstream factory and no routing is needed.
+       LivenessRoutingMediaSourceFactory(
+-        cachedFactory = DefaultMediaSourceFactory(cacheDataSourceFactory),
+-        uncachedFactory = DefaultMediaSourceFactory(upstreamFactory)
++        cachedFactory = DefaultMediaSourceFactory(cacheDataSourceFactory, extractorsFactory),
++        uncachedFactory = DefaultMediaSourceFactory(upstreamFactory, extractorsFactory)
+       )
+-    } ?: DefaultMediaSourceFactory(upstreamFactory)
++    } ?: DefaultMediaSourceFactory(upstreamFactory, extractorsFactory)
+ 
+     val built = ExoPlayer.Builder(this)
+       .setMediaSourceFactory(LiveRefreshMediaSourceFactory(mediaSourceFactory))
+@@ -231,7 +239,25 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
        )
      }
--
-+
+ 
 +    val rewindButton = CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
 +      .setPlayerCommand(Player.COMMAND_SEEK_BACK)
 +      .setDisplayName("Rewind")
@@ -36,3 +65,4 @@ index 9120777..1af63cb 100644
 +      .setMediaButtonPreferences(ImmutableList.of(rewindButton, forwardButton))
        .apply { sessionActivity?.let { setSessionActivity(it) } }
        .build()
+ 

@@ -4,7 +4,7 @@ export type ParseResult<T> =
   | { ok: true; value: T }
   | { ok: false; issues: string[] };
 
-export type MediaType = "audiobook" | "comic";
+export type MediaType = "audiobook";
 export type DownloadState =
   | "queued"
   | "resolving"
@@ -26,15 +26,6 @@ export interface AudiobookProgress {
   lastPlayedAt: number;
 }
 
-export interface ComicProgress {
-  chapterId?: string;
-  chapterNumber?: string;
-  page: number;
-  totalPages: number;
-  finished: boolean;
-  lastReadAt: number;
-}
-
 export interface Bookmark {
   id: string;
   trackIndex: number;
@@ -50,7 +41,6 @@ export interface LocalResource {
   filename?: string;
   byteSize?: number;
   verification: "unknown" | "verified" | "failed";
-  extractedPages?: string[];
 }
 
 export interface LibraryItem {
@@ -66,7 +56,7 @@ export interface LibraryItem {
   addedAt: number;
   updatedAt: number;
   lastInteractedAt?: number;
-  progress?: AudiobookProgress | ComicProgress;
+  progress?: AudiobookProgress;
   bookmarks: Bookmark[];
   localResources: LocalResource[];
   source?: Record<string, unknown>;
@@ -93,8 +83,11 @@ export interface SettingsRecord {
   wifiOnly: boolean;
   autoResume: boolean;
   autoDeleteFinished: boolean;
-  dataSaver: boolean;
-  comicsEnabled: boolean;
+  smartRewind: boolean;
+  sleepFade: boolean;
+  bedtimeTimer: boolean;
+  bedtimeStart: number;
+  bedtimeMinutes: number;
 }
 
 export interface DownloadJobRecord {
@@ -103,7 +96,7 @@ export interface DownloadJobRecord {
   itemId: string;
   kind: MediaType;
   state: DownloadState;
-  sources: Array<{ title?: string; url?: string; filename?: string }>;
+  sources: { title?: string; url?: string; filename?: string }[];
   destinations: string[];
   bytesDownloaded: number;
   bytesTotal: number;

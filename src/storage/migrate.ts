@@ -26,14 +26,13 @@ function decode(raw: string | null): Record<string, any> {
 
 function migrateItem(id: string, value: unknown, now: number): LibraryItem {
   const old = object(value);
-  const comic = old.type === "comic";
   const progress = object(old.progress);
   const bookmarks = Array.isArray(old.bookmarks) ? old.bookmarks : [];
   const files = Array.isArray(old.files) ? old.files : [];
   const migrated: LibraryItem = {
     schemaVersion: STORAGE_SCHEMA_VERSION,
     id,
-    mediaType: comic ? "comic" : "audiobook",
+    mediaType: "audiobook",
     title: typeof old.title === "string" && old.title ? old.title : "Untitled",
     authors: typeof old.author === "string" && old.author ? [old.author] : [],
     addedAt: typeof old.downloadedAt === "number" ? old.downloadedAt : now,
@@ -59,33 +58,23 @@ function migrateItem(id: string, value: unknown, now: number): LibraryItem {
         uri: entry.uri,
         ...(typeof entry.title === "string" ? { filename: entry.title } : {}),
         verification: "unknown" as const,
-        ...(Array.isArray(entry.pages) ? { extractedPages: entry.pages.filter((page: unknown) => typeof page === "string") } : {}),
       }];
     }),
     source: old,
   };
   if (Object.keys(progress).length) {
-    migrated.progress = comic
-      ? {
-          ...(typeof progress.chapterId === "string" ? { chapterId: progress.chapterId } : {}),
-          ...(typeof progress.chapterNum === "string" ? { chapterNumber: progress.chapterNum } : {}),
-          page: Number.isInteger(progress.page) && progress.page >= 0 ? progress.page : 0,
-          totalPages: Number.isInteger(progress.totalPages) && progress.totalPages >= 0 ? progress.totalPages : 0,
-          finished: progress.finished === true,
-          lastReadAt: Number.isFinite(progress.lastRead || progress.lastPlayed) ? (progress.lastRead || progress.lastPlayed) : 0,
-        }
-      : {
-          trackIndex: Number.isInteger(progress.trackIndex) && progress.trackIndex >= 0 ? progress.trackIndex : 0,
-          positionSeconds: Number.isFinite(progress.position) && progress.position >= 0 ? progress.position : 0,
-          ...(Number.isFinite(progress.duration) && progress.duration >= 0 ? { totalDurationSeconds: progress.duration } : {}),
-          finished: progress.finished === true,
-          lastPlayedAt: Number.isFinite(progress.lastPlayed) ? progress.lastPlayed : 0,
-        };
+    migrated.progress = {
+      trackIndex: Number.isInteger(progress.trackIndex) && progress.trackIndex >= 0 ? progress.trackIndex : 0,
+      positionSeconds: Number.isFinite(progress.position) && progress.position >= 0 ? progress.position : 0,
+      ...(Number.isFinite(progress.duration) && progress.duration >= 0 ? { totalDurationSeconds: progress.duration } : {}),
+      finished: progress.finished === true,
+      lastPlayedAt: Number.isFinite(progress.lastPlayed) ? progress.lastPlayed : 0,
+    };
   }
   return migrated;
 }
 
-function migrateSettings(legacy: Record<string, any>, comicsEnabled: boolean): SettingsRecord {
+function migrateSettings(legacy: Record<string, any>): SettingsRecord {
   return {
     schemaVersion: STORAGE_SCHEMA_VERSION,
     speed: typeof legacy.speed === "number" && legacy.speed > 0 ? legacy.speed : 1,
@@ -94,8 +83,11 @@ function migrateSettings(legacy: Record<string, any>, comicsEnabled: boolean): S
     wifiOnly: legacy.wifiOnly === true,
     autoResume: legacy.autoResume === true,
     autoDeleteFinished: legacy.autoDeleteFinished === true,
-    dataSaver: legacy.dataSaver === true,
-    comicsEnabled,
+    smartRewind: legacy.smartRewind !== false,
+    sleepFade: legacy.sleepFade !== false,
+    bedtimeTimer: false,
+    bedtimeStart: 22,
+    bedtimeMinutes: 30,
   };
 }
 
@@ -116,12 +108,14 @@ export async function runStorageMigration(): Promise<MigrationResult> {
     const legacySettings = decode(rawSettings);
     const legacyDownloads = decode(rawDownloads);
     const now = Date.now();
+    // Comics were removed: their entries aren't carried over (the legacy blob
+    // stays in the backup untouched).
     const library = Object.fromEntries(
-      Object.entries(legacyLibrary).map(([id, item]) => [id, migrateItem(id, item, now)]),
+      Object.entries(legacyLibrary)
+        .filter(([, item]) => object(item).type !== "comic")
+        .map(([id, item]) => [id, migrateItem(id, item, now)]),
     );
-    const hasComics = Object.values(library).some((item) => item.mediaType === "comic") ||
-      Object.values(legacyDownloads).some((job) => object(object(job).book).type === "comic");
-    const settings = migrateSettings(legacySettings, hasComics);
+    const settings = migrateSettings(legacySettings);
     const backup = { library: rawLibrary, settings: rawSettings, downloads: rawDownloads, createdAt: now };
     await AsyncStorage.multiSet([
       [STORAGE_KEYS.migrationBackup, JSON.stringify(backup)],

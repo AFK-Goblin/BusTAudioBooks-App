@@ -25,3 +25,22 @@ test("reports a migration warning but permits legacy startup", async () => {
   expect(result.ready).toBe(true);
   expect(result.warnings[0]?.stage).toBe("migration");
 });
+
+test("the UI doesn't wait for the last book to be restored", async () => {
+  resetStartupForTests();
+  let finishRestore!: () => void;
+  const restore = new Promise<void>((resolve) => { finishRestore = resolve; });
+  const result = await initializeApplication({
+    migrate: async () => ({ ok: true as const, migrated: false, itemCount: 0 }),
+    settings: async () => {},
+    player: () => restore, // e.g. resolving a stream on TorBox and buffering it
+    downloads: async () => { throw new Error("downloader unavailable"); },
+  });
+  expect(result.ready).toBe(true);
+  let settled = false;
+  void result.background.then(() => { settled = true; });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  finishRestore();
+  expect(await result.background).toEqual([{ stage: "downloads", message: "downloader unavailable" }]);
+});

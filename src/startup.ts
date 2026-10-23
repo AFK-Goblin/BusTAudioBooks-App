@@ -1,7 +1,13 @@
 import { runStorageMigration, type MigrationResult } from "./storage/migrate";
 
 export type StartupWarning = { stage: "migration" | "settings" | "player" | "downloads"; message: string };
-export type StartupResult = { ready: true; warnings: StartupWarning[]; migration?: MigrationResult };
+export type StartupResult = {
+  ready: true;
+  warnings: StartupWarning[];
+  migration?: MigrationResult;
+  // Player restore and download resume, still running when the UI appears.
+  background: Promise<StartupWarning[]>;
+};
 type StartupDependencies = {
   migrate: () => Promise<MigrationResult>;
   settings: () => Promise<unknown>;
@@ -11,6 +17,12 @@ type StartupDependencies = {
 
 let startupPromise: Promise<StartupResult> | null = null;
 
+// Resolves as soon as the first screen can render: storage migrated and
+// settings loaded (both local and quick). Restoring the last book is NOT
+// waited for — for a streamed book it means a TorBox round-trip plus
+// buffering, which used to hold the loading spinner for many seconds.
+// Anything that needs the player (loadBook, the background service) awaits
+// the session's own initialize(), so starting it late is safe.
 export function initializeApplication(deps?: StartupDependencies): Promise<StartupResult> {
   if (startupPromise) return startupPromise;
   startupPromise = (async () => {
@@ -23,12 +35,13 @@ export function initializeApplication(deps?: StartupDependencies): Promise<Start
     } catch (error) {
       warnings.push({ stage: "migration", message: message(error) });
     }
-    for (const [stage, operation] of [
-      ["settings", actual.settings], ["player", actual.player], ["downloads", actual.downloads],
-    ] as const) {
-      try { await operation(); } catch (error) { warnings.push({ stage, message: message(error) }); }
-    }
-    return { ready: true, warnings, ...(migration ? { migration } : {}) };
+    try { await actual.settings(); } catch (error) { warnings.push({ stage: "settings", message: message(error) }); }
+    const background = Promise.all(([["player", actual.player], ["downloads", actual.downloads]] as const).map(
+      async ([stage, operation]): Promise<StartupWarning | null> => {
+        try { await operation(); return null; } catch (error) { return { stage, message: message(error) }; }
+      },
+    )).then((results) => results.filter((w): w is StartupWarning => w !== null));
+    return { ready: true, warnings, background, ...(migration ? { migration } : {}) };
   })();
   return startupPromise;
 }

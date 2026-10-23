@@ -1,4 +1,4 @@
-import { buildMediaItems, buildPlayerConfig, buildRemoteCommands, parseMediaId } from "../config";
+import { buildMediaItems, buildPlayerConfig, buildRemoteCommands, parseMediaId, partTitle } from "../config";
 
 describe("audiobook player configuration", () => {
   test("uses speech audio and native remote controls", () => {
@@ -41,5 +41,14 @@ describe("audiobook player configuration", () => {
       trackIndex: 12,
     });
     expect(parseMediaId("invalid")).toBeNull();
+  });
+});
+
+describe("now-playing part titles", () => {
+  test("bare filenames become the book title, or a cleaned part name", () => {
+    expect(partTitle({ title: "The Book" }, { title: "The_Book_librivox.m4b" }, 0, 1)).toBe("The Book");
+    expect(partTitle({ title: "The Book" }, { title: "03_The_Red_League.mp3" }, 2, 12)).toBe("03 The Red League");
+    expect(partTitle({ title: "The Book" }, { title: "Chapter One" }, 0, 1)).toBe("Chapter One");
+    expect(partTitle({ title: "The Book" }, {}, 4, 12)).toBe("The Book — Part 5");
   });
 });

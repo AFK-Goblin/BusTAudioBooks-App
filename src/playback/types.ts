@@ -1,10 +1,16 @@
 export type PlaybackStatus = "idle" | "loading" | "ready" | "buffering" | "playing" | "paused" | "reconnecting" | "ended" | "error";
 export type PlaybackIntent = "playing" | "paused" | "stopped";
-export type PlaybackSleep = { mode: "off" } | { mode: "timer"; endsAt: number } | { mode: "end-of-track" };
+export type PlaybackSleep =
+  | { mode: "off" }
+  // reason "chapter": a timer aimed at the end of an embedded chapter.
+  | { mode: "timer"; endsAt: number; fadeOutSeconds?: number; reason?: "chapter" }
+  | { mode: "end-of-track" };
+export type SleepOptions = { fadeOutSeconds?: number; reason?: "chapter" };
+export type NativeSleepTimer = { type: "time"; remainingSeconds: number; fadeOutSeconds?: number } | { type: "mediaItem"; index: number };
 export type PlaybackEvent = "progress" | "state" | "playing" | "transition" | "error" | "sleep";
 export type Unsubscribe = () => void;
 
-export type PlaybackFile = { title?: string; filename?: string; url?: string; uri?: string; duration?: number };
+export type PlaybackFile = { title?: string; filename?: string; url?: string; uri?: string; duration?: number; size?: number };
 export type PlaybackBook = { id: string; title: string; author?: string; poster?: string; files: PlaybackFile[] };
 export type NativeMediaItem = { mediaId: string; url?: string; title?: string; artist?: string; albumTitle?: string; artworkUrl?: string; extras?: Record<string, unknown> };
 export type NativeProgress = { position: number; duration: number };
@@ -35,6 +41,11 @@ export interface NativePlayerPort {
   play(): Promise<void>; pause(): Promise<void>; stop(): Promise<void>;
   seekTo(position: number): Promise<void>; seekBy(offset: number): Promise<void>;
   skipTo(index: number): Promise<void>; setRate(rate: number): Promise<void>;
-  sleepAfterTime(seconds: number): Promise<void>; sleepAfterTrack(index: number): Promise<void>; cancelSleep(): Promise<void>;
+  sleepAfterTime(seconds: number, fadeOutSeconds?: number): Promise<void>; sleepAfterTrack(index: number): Promise<void>; cancelSleep(): Promise<void>;
+  getSleepTimer?(): Promise<NativeSleepTimer | null>;
+  // Retitles a queued item in place (notification, lock screen, car displays).
+  updateMetadata?(index: number, metadata: { title?: string; artist?: string; albumTitle?: string }): Promise<void>;
+  // What Android Auto lists (kept natively, so it works with the app closed).
+  setBrowseTree?(categories: unknown[]): void;
   subscribe(event: PlaybackEvent, listener: (payload: any) => void): Unsubscribe;
 }

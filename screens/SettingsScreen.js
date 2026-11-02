@@ -209,6 +209,17 @@ export default function SettingsScreen({ nav }) {
 
         <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Playback"] = event.nativeEvent.layout.y; }}>Playback</Text>
         <View style={styles.card}>
+          <Text style={styles.label}>Chapter display</Text>
+          <Text style={styles.labelSub}>Show chapters and parts below the player, or open them in a separate menu.</Text>
+          <View style={styles.chipRow}>
+            {[["below", "Below player"], ["menu", "Separate menu"]].map(([value, label]) => {
+              const active = value === (settings.chapterDisplay === "menu" ? "menu" : "below");
+              return <TouchableOpacity key={value} style={[styles.chip, { minHeight: 48, justifyContent: "center" }, active && styles.chipActive]} accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={() => setSetting("chapterDisplay", value)}>
+                <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{label}</Text>
+              </TouchableOpacity>;
+            })}
+          </View>
+          <Divider />
           <Text style={styles.label}>Default speed</Text>
           <Text style={styles.labelSub}>For books you haven’t started — each book remembers its own speed.</Text>
           <ChipRow

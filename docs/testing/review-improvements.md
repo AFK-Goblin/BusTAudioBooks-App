@@ -34,3 +34,9 @@ Independent combined review identified finished offline books missing from the D
 ## Follow-up roadmap
 
 Collections, queue, file-based backup, live themes, sync, local import and richer backend discovery remain separate milestones. Existing settings section shortcuts are navigation aids within the current page, not separate settings pages.
+
+## Chapter layout preference — 2 November 2026
+
+Following user feedback, Settings → Playback → Chapter display now offers **Below player** (default) and **Separate menu**. The default restores chapters and parts below the transport controls in the player's main scroll area. Separate menu preserves the compact layout with transport outside the scroll area. The Chapters shortcut scrolls to the inline list or opens the menu according to this choice. Both modes share chapter search, scrolling titles, progress and seek/part selection. The choice is persisted and included in existing settings backup/restore.
+
+Validation: 46 suites / 318 tests pass, including three regressions observed failing before implementation. Typecheck passes; lint reports no errors and four existing warnings. Device layout and TalkBack checks remain pending. This follow-up continues the user's authorization to publish the changes to the existing Expo preview channel for Android runtime 3.2.0.

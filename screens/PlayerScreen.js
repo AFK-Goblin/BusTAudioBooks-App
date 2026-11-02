@@ -42,6 +42,9 @@ export default function PlayerScreen({ nav }) {
   const rate = snapshot.rate || 1;
   const sleep = snapshot.sleep || { mode: "off" };
   const settings = useSettings();
+  const chaptersBelow = settings.chapterDisplay !== "menu";
+  const playerScroll = useRef(null);
+  const chapterTop = useRef(0);
   const topPad = useScreenPad();
   const [seek, setSeek] = useState(null);
   const [entry, setEntry] = useState(null);
@@ -247,6 +250,7 @@ export default function PlayerScreen({ nav }) {
 
   const jumpToPart = useCallback((i) => {
     setSheet(null);
+    setChapterFilter("");
     noteJump(i, 0);
     skipToIndex(i).then(play).catch(() => {});
   }, [noteJump]);
@@ -297,6 +301,93 @@ export default function PlayerScreen({ nav }) {
     ? `${estimate.estimated ? "~" : ""}${formatDuration(estimate.remainingSeconds / rate)} left in book`
     : "";
 
+  function browseChapters() {
+    setChapterFilter("");
+    if (chaptersBelow) playerScroll.current?.scrollTo({ y: chapterTop.current, animated: titleMotion });
+    else setSheet("chapters");
+  }
+
+  const transport = (<>
+        <View style={styles.controls}>
+          <TouchableOpacity style={[styles.ctrl, !hasPrev && styles.ctrlOff]} disabled={!hasPrev} onPress={() => previous().catch(() => {})} accessibilityLabel={chapters ? "Previous chapter" : "Previous part"}>
+            <SkipIcon dir="prev" size={24} color={theme.text} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.ctrl}
+            onPress={() => seekBy(-settings.jumpBack).catch(() => {})}
+            accessibilityLabel={`Back ${settings.jumpBack} seconds`}
+          >
+            <JumpIcon dir="back" seconds={settings.jumpBack} size={40} color={theme.text} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => (playing ? pause() : play()).catch(() => {})}
+            onLongPress={dropBookmark}
+            accessibilityLabel={playing ? "Pause" : "Play"}
+          >
+            <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
+              <PlayPauseIcon playing={playing} size={30} />
+            </LinearGradient>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.ctrl}
+            onPress={() => seekBy(settings.jumpForward).catch(() => {})}
+            accessibilityLabel={`Forward ${settings.jumpForward} seconds`}
+          >
+            <JumpIcon dir="forward" seconds={settings.jumpForward} size={40} color={theme.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.ctrl, !hasNext && styles.ctrlOff]} disabled={!hasNext} onPress={() => next().catch(() => {})} accessibilityLabel={chapters ? "Next chapter" : "Next part"}>
+            <SkipIcon dir="next" size={24} color={theme.text} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.extras}>
+          {canBrowse ? <TouchableOpacity style={styles.chip} onPress={browseChapters} accessibilityRole="button" accessibilityLabel="Open chapters"><Text style={styles.chipTxt}>Chapters</Text></TouchableOpacity> : null}
+          <TouchableOpacity style={styles.chip} onPress={() => setSheet("bookmarks")} accessibilityRole="button" accessibilityLabel="Open bookmarks"><Text style={styles.chipTxt}>Bookmarks{bookmarks.length ? ` · ${bookmarks.length}` : ""}</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.chip} onPress={() => setSheet("speed")} accessibilityRole="button" accessibilityLabel={`Playback speed, ${formatSpeed(rate)}`}>
+            <Text style={styles.chipTxt}>{formatSpeed(rate)}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.chip, bmFlash && styles.chipActive]} onPress={dropBookmark}>
+            <Text style={styles.chipTxt}>{bmFlash ? "Bookmarked ✓" : "+ Bookmark"}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.chip, sleep.mode !== "off" && styles.chipActive]} onPress={() => setSheet("sleep")}>
+            <Text style={styles.chipTxt}>{sleepLabel()}</Text>
+          </TouchableOpacity>
+          {downloaded ? (
+            <View style={[styles.chip, styles.chipDone, styles.chipRow]}>
+              <CheckIcon size={12} color={theme.good} />
+              <Text style={styles.chipTxt}>Downloaded</Text>
+            </View>
+          ) : activeDl && activeDl.status !== "error" ? (
+            <View style={styles.chip}>
+              <Text style={styles.chipTxt}>{activeDl.status === "preparing" ? "Preparing download…" : `Downloading ${activeDl.pct}%`}</Text>
+            </View>
+          ) : isStreamable ? (
+            <TouchableOpacity style={[styles.chip, styles.chipRow]} onPress={downloadThis}>
+              <DownloadIcon size={13} color={theme.text} />
+              <Text style={styles.chipTxt}>Download</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+  </>);
+  const chapterList = (<>
+        {((chapters ? chapters.length : 0) + files.length) > SEARCHABLE_LIST ? (
+          <TextInput
+            style={styles.findInput}
+            value={chapterFilter}
+            onChangeText={setChapterFilter}
+            placeholder={chapters ? "Find a chapter" : "Find a part"}
+            placeholderTextColor={theme.dim}
+            autoCorrect={false}
+          />
+        ) : null}
+        {chapters
+          ? <ChapterRows chapters={chapters} activeIndex={chapterIdx} playing={playing} total={durationKnown ? progress.duration : 0} onPick={jumpToChapter} filter={chapterFilter} animate={titleMotion && !menu && (!sheet || sheet === "chapters")} />
+          : <PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion && !menu && (!sheet || sheet === "chapters")} />}
+        {chapters && files.length > 1 ? <><Text style={styles.chaptersHead}>Parts</Text><PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion && !menu && (!sheet || sheet === "chapters")} /></> : null}
+
+  </>);
+
   return (
     <View style={[styles.wrap, { paddingTop: topPad, paddingBottom: insets.bottom + 8, paddingHorizontal: width < 360 ? 16 : 24 }]}>
       <CoverBackdrop uri={book && book.poster} />
@@ -310,7 +401,7 @@ export default function PlayerScreen({ nav }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={playerScroll} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={[styles.art, compact && { marginTop: 4 }]}>
           <View style={styles.artShadow}>
             <CoverArt uri={book && book.poster} size={coverSize} radius={16} />
@@ -320,7 +411,7 @@ export default function PlayerScreen({ nav }) {
         {seriesLabel ? <Text style={styles.seriesKicker} numberOfLines={1}>{seriesLabel}</Text> : null}
         <Text style={[styles.title, compact && { marginTop: 10 }, seriesLabel && { marginTop: 4 }]} numberOfLines={2}>{(book && book.title) || (track && track.title) || ""}</Text>
         {canBrowse ? (
-          <TouchableOpacity style={styles.partBtn} onPress={() => { setChapterFilter(""); setSheet("chapters"); }}>
+          <TouchableOpacity style={styles.partBtn} onPress={browseChapters}>
             <ScrollingTitle animate={titleMotion && !sheet} style={{ flex: 1, marginTop: 6 }} textStyle={{ color: theme.sub, textAlign: "center" }}>{subtitle}</ScrollingTitle>
             <ChevronIcon dir="down" size={13} color={theme.sub} />
           </TouchableOpacity>
@@ -423,71 +514,16 @@ export default function PlayerScreen({ nav }) {
           <ScrollingTitle animate={titleMotion && !sheet} style={{ marginTop: 8 }} textStyle={{ color: theme.dim, fontSize: 12, textAlign: "center" }}>{`Up next · ${nextChapter.title}`}</ScrollingTitle>
         ) : null}
 
+        {chaptersBelow && transport}
+        {chaptersBelow && canBrowse ? (
+          <View style={styles.chapters} onLayout={(event) => { chapterTop.current = event.nativeEvent.layout.y; }}>
+            <Text style={styles.chaptersHead} accessibilityRole="header">{chapters ? "Chapters" : "Parts"}</Text>
+            {chapterList}
+          </View>
+        ) : null}
       </ScrollView>
 
-        <View style={styles.controls}>
-          <TouchableOpacity style={[styles.ctrl, !hasPrev && styles.ctrlOff]} disabled={!hasPrev} onPress={() => previous().catch(() => {})} accessibilityLabel={chapters ? "Previous chapter" : "Previous part"}>
-            <SkipIcon dir="prev" size={24} color={theme.text} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.ctrl}
-            onPress={() => seekBy(-settings.jumpBack).catch(() => {})}
-            accessibilityLabel={`Back ${settings.jumpBack} seconds`}
-          >
-            <JumpIcon dir="back" seconds={settings.jumpBack} size={40} color={theme.text} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => (playing ? pause() : play()).catch(() => {})}
-            onLongPress={dropBookmark}
-            accessibilityLabel={playing ? "Pause" : "Play"}
-          >
-            <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
-              <PlayPauseIcon playing={playing} size={30} />
-            </LinearGradient>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.ctrl}
-            onPress={() => seekBy(settings.jumpForward).catch(() => {})}
-            accessibilityLabel={`Forward ${settings.jumpForward} seconds`}
-          >
-            <JumpIcon dir="forward" seconds={settings.jumpForward} size={40} color={theme.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.ctrl, !hasNext && styles.ctrlOff]} disabled={!hasNext} onPress={() => next().catch(() => {})} accessibilityLabel={chapters ? "Next chapter" : "Next part"}>
-            <SkipIcon dir="next" size={24} color={theme.text} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.extras}>
-          {canBrowse ? <TouchableOpacity style={styles.chip} onPress={() => { setChapterFilter(""); setSheet("chapters"); }} accessibilityRole="button" accessibilityLabel="Open chapters"><Text style={styles.chipTxt}>Chapters</Text></TouchableOpacity> : null}
-          <TouchableOpacity style={styles.chip} onPress={() => setSheet("bookmarks")} accessibilityRole="button" accessibilityLabel="Open bookmarks"><Text style={styles.chipTxt}>Bookmarks{bookmarks.length ? ` · ${bookmarks.length}` : ""}</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.chip} onPress={() => setSheet("speed")} accessibilityRole="button" accessibilityLabel={`Playback speed, ${formatSpeed(rate)}`}>
-            <Text style={styles.chipTxt}>{formatSpeed(rate)}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.chip, bmFlash && styles.chipActive]} onPress={dropBookmark}>
-            <Text style={styles.chipTxt}>{bmFlash ? "Bookmarked ✓" : "+ Bookmark"}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.chip, sleep.mode !== "off" && styles.chipActive]} onPress={() => setSheet("sleep")}>
-            <Text style={styles.chipTxt}>{sleepLabel()}</Text>
-          </TouchableOpacity>
-          {downloaded ? (
-            <View style={[styles.chip, styles.chipDone, styles.chipRow]}>
-              <CheckIcon size={12} color={theme.good} />
-              <Text style={styles.chipTxt}>Downloaded</Text>
-            </View>
-          ) : activeDl && activeDl.status !== "error" ? (
-            <View style={styles.chip}>
-              <Text style={styles.chipTxt}>{activeDl.status === "preparing" ? "Preparing download…" : `Downloading ${activeDl.pct}%`}</Text>
-            </View>
-          ) : isStreamable ? (
-            <TouchableOpacity style={[styles.chip, styles.chipRow]} onPress={downloadThis}>
-              <DownloadIcon size={13} color={theme.text} />
-              <Text style={styles.chipTxt}>Download</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-
+      {!chaptersBelow && transport}
 
       {undo ? (
         <TouchableOpacity
@@ -560,20 +596,7 @@ export default function PlayerScreen({ nav }) {
       />
 
       <Sheet visible={sheet === "chapters"} onClose={() => setSheet(null)} title={chapters ? "Chapters" : "Parts"}>
-        {((chapters ? chapters.length : 0) + files.length) > SEARCHABLE_LIST ? (
-          <TextInput
-            style={styles.findInput}
-            value={chapterFilter}
-            onChangeText={setChapterFilter}
-            placeholder={chapters ? "Find a chapter" : "Find a part"}
-            placeholderTextColor={theme.dim}
-            autoCorrect={false}
-          />
-        ) : null}
-        {sheet === "chapters" && (chapters
-          ? <ChapterRows chapters={chapters} activeIndex={chapterIdx} playing={playing} total={durationKnown ? progress.duration : 0} onPick={jumpToChapter} filter={chapterFilter} animate={titleMotion} />
-          : <PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion} />)}
-        {sheet === "chapters" && chapters && files.length > 1 ? <><Text style={styles.chaptersHead}>Parts</Text><PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion} /></> : null}
+        {!chaptersBelow && sheet === "chapters" ? chapterList : null}
       </Sheet>
 
       <Sheet visible={sheet === "goto"} onClose={() => setSheet(null)} title="Go to time">

@@ -72,6 +72,7 @@ beforeEach(async () => {
   mockSnapshot.current = { book: m4b, status: "paused", intent: "paused", rate: 1, sleep: { mode: "off" }, activeTrackIndex: 0 };
   chaptersService.embeddedChapters.mockResolvedValue(CHAPTERS);
   await setSetting("sleepFade", true);
+  await setSetting("chapterDisplay", "menu");
 });
 
 test("the player shows the current embedded chapter and steps between chapters", async () => {
@@ -868,4 +869,47 @@ test("Downloaded retains finished offline books and excludes finished streams", 
   expect(screen.getAllByText("Kept Offline")).toHaveLength(1);
   expect(screen.queryByText("Finished Stream")).toBeNull();
   expect(screen.queryByText("No offline books yet")).toBeNull();
+});
+
+test("chapter display defaults below the player for existing settings and supports seeking", async () => {
+  await AsyncStorage.setItem("bustaudio_settings_v2", JSON.stringify({ speed: 1 }));
+  await require("../settings").initSettings();
+  await render(<PlayerScreen nav={nav} />);
+  expect(await screen.findByText("A Scandal in Bohemia")).toBeTruthy();
+  expect(screen.queryByLabelText("Close Chapters")).toBeNull();
+  await fireEvent.press(screen.getByText("A Case of Identity"));
+  await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(8049));
+  expect(player.play).toHaveBeenCalled();
+});
+
+test("chapter display choice persists and switches between menu and below-player layouts", async () => {
+  await render(<SettingsScreen nav={nav} />);
+  await fireEvent.press(await screen.findByText("Below player"));
+  await screen.unmount();
+  await require("../settings").initSettings();
+  await render(<PlayerScreen nav={nav} />);
+  expect(await screen.findByText("A Scandal in Bohemia")).toBeTruthy();
+  await screen.unmount();
+  await render(<SettingsScreen nav={nav} />);
+  await fireEvent.press(screen.getByText("Separate menu"));
+  await screen.unmount();
+  await require("../settings").initSettings();
+  await render(<PlayerScreen nav={nav} />);
+  expect(screen.queryByText("A Scandal in Bohemia")).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Open chapters"));
+  expect(await screen.findByText("A Scandal in Bohemia")).toBeTruthy();
+});
+
+test("below-player layout includes multipart files and retains chapter search", async () => {
+  await setSetting("chapterDisplay", "below");
+  chaptersService.embeddedChapters.mockResolvedValue(null);
+  mockSnapshot.current = { ...mockSnapshot.current, book: { ...m4b, files: Array.from({ length: 25 }, (_, i) => ({ title: `Part title ${i + 1}`, url: `https://cdn/${i}` })) } };
+  await render(<PlayerScreen nav={nav} />);
+  expect(await screen.findByText("Part title 25")).toBeTruthy();
+  await fireEvent.changeText(screen.getByPlaceholderText("Find a part"), "title 25");
+  expect(screen.queryByText("Part title 2")).toBeNull();
+  await fireEvent.press(screen.getByText("Part title 25"));
+  await waitFor(() => expect(player.skipToIndex).toHaveBeenCalledWith(24));
+  expect(screen.getByPlaceholderText("Find a part").props.value).toBe("");
+  expect(screen.getByText("Part title 2")).toBeTruthy();
 });

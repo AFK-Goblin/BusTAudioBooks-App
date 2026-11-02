@@ -22,6 +22,7 @@ export const DEFAULTS = {
   instantOnly: false, // search results: only torrents TorBox has cached
   showRemaining: false, // player: right-hand time shows time left, not length
   librarySort: "recent", // "recent" | "title" | "author"
+  chapterDisplay: "below", // "below" | "menu": where the player lists chapters and parts
   scrubScope: "chapter", // player slider with embedded chapters: "chapter" | "book"
   dailyGoal: 0, // minutes of listening a day to aim for; 0 = no goal
   libraryCollapsed: [], // Library sections folded away: "continue" | "saved" | "download" | "finished"

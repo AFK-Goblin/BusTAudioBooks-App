@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   brand: { color: theme.text, fontSize: 22, fontWeight: "800" },
   filter: { borderWidth: 1, borderColor: theme.border, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5 },
-  filterOn: { backgroundColor: theme.accent, borderColor: theme.accent },
+  filterOn: { backgroundColor: theme.button, borderColor: theme.accent },
   filterTxt: { color: theme.sub, fontWeight: "600", fontSize: 13 },
   filterTxtOn: { color: "#fff" },
   bookHead: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 18, marginBottom: 4 },

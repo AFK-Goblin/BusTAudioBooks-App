@@ -24,7 +24,7 @@ import {
 } from "@kesha-antonov/react-native-background-downloader";
 import { createNativeDownload } from "./downloads/adapter";
 import { upsertBook, finishedBooks, clearBookDownload, getBook, getLibrary, removeBooks } from "./library";
-import { startTracking, reportProgress, finishTracking, failTracking, dismissTracking } from "./downloadStore";
+import { startTracking, beginTransfer, reportProgress, finishTracking, failTracking, dismissTracking } from "./downloadStore";
 import { showToast } from "./toast";
 import { getSettings } from "./settings";
 import { getStreams } from "./api";
@@ -87,18 +87,25 @@ function lockedJobs(fn) {
   return run;
 }
 async function loadJobs() {
-  try {
-    const s = await AsyncStorage.getItem(JKEY);
-    return s ? JSON.parse(s) : {};
-  } catch (_) {
-    return {};
-  }
+  // A failed read must not turn into an empty map and erase other jobs.
+  const stored = await AsyncStorage.getItem(JKEY);
+  const jobs = stored ? JSON.parse(stored) : {};
+  if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) throw new Error("Couldn't read download jobs.");
+  return jobs;
 }
-function saveJob(book, files, dir) {
+function saveJob(job) {
   return lockedJobs(async () => {
     const jobs = await loadJobs();
-    jobs[book.id] = { book, files, dir };
-    await AsyncStorage.setItem(JKEY, JSON.stringify(jobs)).catch(() => {});
+    jobs[job.book.id] = job;
+    await AsyncStorage.setItem(JKEY, JSON.stringify(jobs));
+  });
+}
+function recordCompletedPart(id, index, size) {
+  return lockedJobs(async () => {
+    const jobs = await loadJobs();
+    if (!jobs[id]) throw new Error("Download job is missing.");
+    jobs[id].completedParts = { ...jobs[id].completedParts, [index]: { size } };
+    await AsyncStorage.setItem(JKEY, JSON.stringify(jobs));
   });
 }
 function removeJob(id) {
@@ -190,14 +197,14 @@ function runTask(id, url, destination, onProgress, bookId, notificationTitle) {
       isAllowedOverRoaming: !wifiOnly,
       metadata: { notificationTitle, groupId: bookId },
     }, {
-      begin: () => {},
+      begin: () => beginTransfer(bookId),
       progress: (a, b, c) => {
         const [written, total] = parseProgress(a, b, c);
         if (onProgress) onProgress(written || 0, total || 0);
       },
-      done: () => {
+      done: (result) => {
         try { completeHandler(task.id); } catch (_) {}
-        settle.resolve();
+        settle.resolve(result);
       },
       error: (e) => {
         try { completeHandler(task.id); } catch (_) {}
@@ -223,26 +230,27 @@ function attachTask(task, onProgress, bookId) {
   return new Promise((resolve, reject) => {
     if (task.state === "DONE") {
       try { completeHandler(task.id); } catch (_) {}
-      resolve();
+      resolve({ bytesTotal: task.bytesTotal });
       return;
     }
     const settle = settleOnce(bookId, resolve, reject);
     settle.register(task);
     task
+      .begin(() => beginTransfer(bookId))
       .progress((a, b, c) => {
         const [written, total] = parseProgress(a, b, c);
         if (onProgress) onProgress(written || 0, total || 0);
       })
-      .done(() => {
+      .done((result) => {
         try { completeHandler(task.id); } catch (_) {}
-        settle.resolve();
+        settle.resolve(result);
       })
       .error((e) => {
         try { completeHandler(task.id); } catch (_) {}
         settle.reject(failure(e, bookId));
       });
     if (task.state === "PAUSED") {
-      try { task.resume(); } catch (_) {}
+      Promise.resolve().then(() => task.resume()).catch(settle.reject);
     }
   });
 }
@@ -273,18 +281,27 @@ function notificationTitle(book, index, count) {
 // ---- book download core ------------------------------------------------------
 // existingTasks: Map(taskId -> recovered task) when resuming after an app kill,
 // null for a fresh download. resuming also skips files already fully on disk.
-async function runBookDownload(book, files, existingTasks, onProgress, dir = storageDirFor(book.id)) {
-  running.add(book.id);
+async function runBookDownload(book, files, existingTasks, onProgress, dir, namingVersion = 1, completedParts = {}) {
   startTracking(book.id, { title: book.title, poster: book.poster, count: files.length, book, files });
   const rel = "bustaudio/" + dir;
-  await FileSystem.makeDirectoryAsync(`${BASE_URI}/${rel}`, { intermediates: true }).catch(() => {});
-
   try {
+    // A job can outlive the final library write if the app dies before job
+    // removal. Never overwrite that completed offline copy on recovery.
+    const owner = await getBook(book.id);
+    if (owner && owner.downloaded) {
+      await removeJob(book.id).catch(() => {});
+      finishTracking(book.id);
+      return owner;
+    }
+    await FileSystem.makeDirectoryAsync(`${BASE_URI}/${rel}`, { intermediates: true });
     const localFiles = [];
     for (let i = 0; i < files.length; i++) {
       if (cancelled.has(book.id)) throw new DownloadCancelled();
       const f = files[i];
-      const name = safe(f.filename || `part-${String(i + 1).padStart(3, "0")}`);
+      const originalName = safe(f.filename || `part-${String(i + 1).padStart(3, "0")}`);
+      // Index comes before the sanitized/truncated name so every part is distinct.
+      // Older persisted jobs retain their original destination and native task id.
+      const name = namingVersion >= 2 ? `${String(i + 1).padStart(4, "0")}-${originalName}` : originalName;
       const destination = `${BASE}/${rel}/${name}`;
       // Native task ids are what a resumed job re-attaches by — they must stay
       // derived from the folder the job was started with.
@@ -296,28 +313,40 @@ async function runBookDownload(book, files, existingTasks, onProgress, dir = sto
         if (onProgress) onProgress(i, files.length, written, total);
       };
 
+      const uri = `${BASE_URI}/${rel}/${name}`;
       const existing = existingTasks && existingTasks.get(taskId);
-      if (existing) {
-        await attachTask(existing, prog, book.id);
-      } else if (existingTasks) {
-        // Resuming, but the OS no longer knows this task: a file already on
-        // disk finished while we were dead; anything else gets re-downloaded.
-        const info = await FileSystem.getInfoAsync(`${BASE_URI}/${rel}/${name}`, { size: true }).catch(() => null);
-        if (!(info && info.exists && info.size > 0)) {
-          await runTask(taskId, f.url, destination, prog, book.id, notificationTitle(book, i, files.length));
+      let info = await FileSystem.getInfoAsync(uri, { size: true });
+      if (cancelled.has(book.id)) throw new DownloadCancelled();
+      const proof = completedParts[i];
+      const reusable = existingTasks && !existing && proof && proof.size > 0 &&
+        info.exists && !info.isDirectory && info.size === proof.size &&
+        (!(f.size > 0) || info.size === f.size);
+      if (!reusable) {
+        let result;
+        if (existing) {
+          result = await attachTask(existing, prog, book.id);
         } else {
-          fileBytes = info.size;
+          // Never hand a partial destination to a fresh native transfer. A
+          // recovered running task owns its file and resumes it itself.
+          if (info.exists) await FileSystem.deleteAsync(uri, { idempotent: true });
+          if (cancelled.has(book.id)) throw new DownloadCancelled();
+          result = await runTask(taskId, f.url, destination, prog, book.id, notificationTitle(book, i, files.length));
         }
-      } else {
-        await runTask(taskId, f.url, destination, prog, book.id, notificationTitle(book, i, files.length));
+        if (cancelled.has(book.id)) throw new DownloadCancelled();
+        info = await FileSystem.getInfoAsync(uri, { size: true });
+        const expected = f.size > 0 ? f.size : (result && result.bytesTotal > 0 ? result.bytesTotal : fileBytes);
+        if (!info.exists || info.isDirectory || !(info.size > 0) || (expected > 0 && info.size !== expected)) {
+          throw new Error("Downloaded file is incomplete or has an unexpected size.");
+        }
+        // Only a native completion followed by disk validation earns a durable
+        // checkpoint. Unknown-size files need this evidence too, never size > 0 alone.
+        await recordCompletedPart(book.id, i, info.size);
       }
       if (cancelled.has(book.id)) throw new DownloadCancelled();
-      // filename + size travel with the local copy: size drives whole-book
-      // progress for multi-part books, filename keeps the format visible.
-      const size = f.size || fileBytes;
+      const size = info.size;
       localFiles.push({
         title: f.title,
-        uri: `file://${destination}`,
+        uri,
         ...(f.filename ? { filename: f.filename } : {}),
         ...(size > 0 ? { size } : {}),
       });
@@ -332,12 +361,12 @@ async function runBookDownload(book, files, existingTasks, onProgress, dir = sto
     });
     finishTracking(book.id);
     showToast(`Downloaded “${book.title}” — it plays offline now`);
-    await removeJob(book.id);
+    await removeJob(book.id).catch(() => {});
     return entry;
   } catch (err) {
     if (err instanceof DownloadCancelled || cancelled.has(book.id)) {
       dismissTracking(book.id);
-      await removeJob(book.id);
+      await removeJob(book.id).catch(() => {});
       // Drop the partial files — unless the folder belongs to a copy that is
       // already downloaded (never delete a finished download by accident).
       const owner = await getBook(book.id).catch(() => null);
@@ -347,7 +376,7 @@ async function runBookDownload(book, files, existingTasks, onProgress, dir = sto
       throw err instanceof DownloadCancelled ? err : new DownloadCancelled();
     }
     failTracking(book.id, err.message);
-    await removeJob(book.id);
+    await removeJob(book.id).catch(() => {});
     throw err;
   } finally {
     running.delete(book.id);
@@ -358,24 +387,50 @@ async function runBookDownload(book, files, existingTasks, onProgress, dir = sto
 
 // files: [{ title, url, filename }]
 // onProgress(fileIndex, fileCount, writtenBytes, totalBytes)  (optional)
-export async function downloadBook(book, files, onProgress) {
-  // Safety: only ever download TorBox HTTPS links.
+async function acceptDownload(book, files, onProgress) {
+  if (!book || !book.id || !Array.isArray(files) || files.length === 0) {
+    throw new Error("No files to download.");
+  }
   for (const f of files) {
-    if (!/^https:\/\//i.test(f.url || "")) {
+    if (!/^https:\/\//i.test((f && f.url) || "")) {
       throw new Error("Refusing a non-HTTPS link (downloads must go through TorBox).");
     }
   }
-  // A second loop for the same book would fight the first over its task ids.
+  // Reserve synchronously, before the first storage await.
   if (running.has(book.id)) throw new Error("This is already downloading.");
+  running.add(book.id);
+  startTracking(book.id, { title: book.title, poster: book.poster, count: files.length, book, files });
   const dir = storageDirFor(book.id);
-  await saveJob(book, files, dir);
-  return runBookDownload(book, files, null, onProgress, dir);
+  try {
+    await saveJob({ book, files, dir, namingVersion: 2, completedParts: {} });
+  } catch (err) {
+    running.delete(book.id);
+    cancelled.delete(book.id);
+    failTracking(book.id, err.message);
+    throw err;
+  }
+  const completion = runBookDownload(book, files, null, onProgress, dir, 2);
+  // Acceptance callers intentionally do not await transfer completion. The
+  // download loop reports later failures in the store without an unhandled rejection.
+  completion.catch(() => {});
+  return { completion };
 }
 
-// Fire-and-forget: start a download and let the global store track it, so the
-// user can navigate away and still watch progress in the Library.
+export async function downloadBook(book, files, onProgress) {
+  const { completion } = await acceptDownload(book, files, onProgress);
+  return completion;
+}
+
+// Resolves after durable job acceptance, not after the files finish. Callers
+// handing off ownership (such as Waiting) must await this and handle rejection.
+export async function enqueueDownload(book, files) {
+  await acceptDownload(book, files);
+}
+
+// Existing UI callers retain their fire-and-forget contract; errors remain
+// visible through the global download store.
 export function startDownload(book, files) {
-  downloadBook(book, files).catch(() => {});
+  enqueueDownload(book, files).catch(() => {});
 }
 
 // Retry a failed download. TorBox links expire, and a download that failed
@@ -411,15 +466,14 @@ export async function resumePendingDownloads() {
   const jobs = await loadJobs();
   const ids = Object.keys(jobs);
   if (ids.length === 0) return;
-  let tasks = [];
-  try {
-    tasks = await getExistingDownloadTasks();
-  } catch (_) {}
+  // If native discovery fails, ownership of the destinations is unknown.
+  // Leave jobs untouched instead of starting duplicate writers.
+  const tasks = await getExistingDownloadTasks();
   const byId = new Map(tasks.map((t) => [t.id, t]));
   for (const id of ids) {
-    const { book, files, dir } = jobs[id] || {};
-    if (!book || !files) {
-      removeJob(id);
+    const { book, files, dir, namingVersion, completedParts } = jobs[id] || {};
+    if (!book || !Array.isArray(files) || files.length === 0) {
+      await removeJob(id);
       continue;
     }
     if (book.type === "comic") {
@@ -436,7 +490,9 @@ export async function resumePendingDownloads() {
     }
     // Jobs saved by pre-3.1 builds have no dir: their files and native task
     // ids use the legacy folder name.
-    runBookDownload(book, files, byId, undefined, dir || legacyDirFor(book.id)).catch(() => {});
+    if (running.has(book.id)) continue;
+    running.add(book.id);
+    runBookDownload(book, files, byId, undefined, dir || legacyDirFor(book.id), namingVersion, completedParts).catch(() => {});
   }
 }
 

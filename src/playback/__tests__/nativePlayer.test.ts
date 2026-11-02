@@ -53,6 +53,32 @@ test("translates native player reads and commands", async () => {
   expect(player.sleepAfterTime).toHaveBeenLastCalledWith(600, { fadeOutSeconds: 30 });
 });
 
+test("shares a concurrent setup attempt and reuses it after success", async () => {
+  const { port, player } = harness();
+  let finishSetup!: () => void;
+  player.setupPlayer.mockImplementation(() => new Promise<void>((resolve) => { finishSetup = resolve; }));
+
+  const attempts = [port.setup({}), port.setup({}), port.setup({})];
+  expect(player.setupPlayer).toHaveBeenCalledTimes(1);
+  finishSetup();
+  await Promise.all(attempts);
+  await port.setup({});
+
+  expect(player.setupPlayer).toHaveBeenCalledTimes(1);
+});
+
+test("clears a failed native setup attempt so it can be retried", async () => {
+  const { port, player } = harness();
+  player.setupPlayer
+    .mockRejectedValueOnce(new Error("native setup failed"))
+    .mockResolvedValueOnce(undefined);
+
+  await expect(port.setup({})).rejects.toThrow("native setup failed");
+  await expect(port.setup({})).resolves.toBeUndefined();
+
+  expect(player.setupPlayer).toHaveBeenCalledTimes(2);
+});
+
 test("reads the native sleep timer so a reloaded UI can show it", async () => {
   const { port, player } = harness();
   expect(await port.getSleepTimer?.()).toBeNull();

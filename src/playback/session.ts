@@ -76,7 +76,24 @@ export class PlaybackSession {
   }
 
   initialize(): Promise<PlaybackSnapshot> {
-    if (!this.initializing) this.initializing = this.initializeOnce();
+    if (!this.initializing) {
+      if (this.snapshot.error?.code === "initialization-failed") {
+        this.emit({ status: this.snapshot.book ? "loading" : "idle" });
+      }
+      this.initializing = this.initializeOnce().catch((error) => {
+        this.initializing = undefined;
+        this.unregisterNativeListeners();
+        this.emit({
+          status: "error",
+          error: {
+            code: "initialization-failed",
+            message: error instanceof Error ? error.message : "Playback could not be initialized",
+            retryable: true,
+          },
+        });
+        throw error;
+      });
+    }
     return this.initializing;
   }
 
@@ -180,6 +197,12 @@ export class PlaybackSession {
       this.deps.player.subscribe("error", (event) => { void this.handlePlaybackError(event); }),
       this.deps.player.subscribe("sleep", () => { void this.handleSleepTriggered(); }),
     ];
+  }
+
+  private unregisterNativeListeners(): void {
+    const unsubscribes = this.nativeUnsubscribes;
+    this.nativeUnsubscribes = [];
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
   }
 
   // Android Auto starts a book's parts straight from the browse tree, without

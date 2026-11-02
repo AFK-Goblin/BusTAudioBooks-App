@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, ScrollView,
   StyleSheet, ActivityIndicator, Keyboard,
@@ -34,6 +34,7 @@ let cache = emptyCache();
 const RECENT_MAX = 8;
 
 export default function SearchScreen({ nav, params = {} }) {
+  const requestGeneration = useRef(0);
   const [q, setQ] = useState(cache.q);
   const [items, setItems] = useState(cache.items);
   const [busy, setBusy] = useState(false);
@@ -61,7 +62,7 @@ export default function SearchScreen({ nav, params = {} }) {
   const [formatPick, setFormatPick] = useState(null);
   const formats = [...new Set(items.map(formatOf).filter(Boolean))];
   const pickedFormat = formats.length > 1 && formats.includes(formatPick) ? formatPick : null;
-  const afterInstant = instantOnly && instantCount > 0 ? items.filter((it) => it.cached) : items;
+  const afterInstant = instantOnly ? items.filter((it) => it.cached) : items;
   const shown = pickedFormat ? afterInstant.filter((it) => formatOf(it) === pickedFormat) : afterInstant;
   // Uploads of the same book (same title and author) share one row.
   const groups = groupUploads(shown);
@@ -92,6 +93,10 @@ export default function SearchScreen({ nav, params = {} }) {
     return () => { alive = false; };
   }, []);
 
+  useEffect(() => () => {
+    requestGeneration.current += 1;
+  }, []);
+
   async function rememberSearch(query) {
     // Category chips aren't "searches" worth remembering.
     if (CATEGORIES.includes(query)) return;
@@ -108,22 +113,26 @@ export default function SearchScreen({ nav, params = {} }) {
   const run = useCallback(async (term) => {
     const query = (term != null ? term : q).trim();
     if (!query) return;
+    const request = ++requestGeneration.current;
     if (term != null) setQ(term);
     Keyboard.dismiss();
     setBusy(true);
+    setBusyMore(false);
     setError(null);
     setSearched(true);
     try {
       const results = await search(query, 1);
+      if (request !== requestGeneration.current) return;
       cache = { q: query, items: results, searched: true, page: 1, noMore: results.length === 0 };
       setItems(results);
       setNoMore(results.length === 0);
       if (results.length > 0) rememberSearch(query);
     } catch (e) {
+      if (request !== requestGeneration.current) return;
       setError(e.message || "Search failed");
       setItems([]);
     } finally {
-      setBusy(false);
+      if (request === requestGeneration.current) setBusy(false);
     }
   // rememberSearch only reads recents, which can't change mid-search.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,10 +141,12 @@ export default function SearchScreen({ nav, params = {} }) {
   async function loadMore() {
     const cur = cache;
     if (busyMore || noMore || !cur.q) return;
+    const request = ++requestGeneration.current;
     setBusyMore(true);
     try {
       const next = cur.page + 1;
       const more = await search(cur.q, next);
+      if (request !== requestGeneration.current) return;
       const seen = new Set(cur.items.map((it) => it.id));
       const fresh = more.filter((it) => !seen.has(it.id));
       const merged = [...cur.items, ...fresh];
@@ -145,7 +156,7 @@ export default function SearchScreen({ nav, params = {} }) {
     } catch (_) {
       /* keep what we have; the button stays for another try */
     } finally {
-      setBusyMore(false);
+      if (request === requestGeneration.current) setBusyMore(false);
     }
   }
 
@@ -159,6 +170,9 @@ export default function SearchScreen({ nav, params = {} }) {
   }
 
   function clearSearch() {
+    requestGeneration.current += 1;
+    setBusy(false);
+    setBusyMore(false);
     setQ(""); setItems([]); setSearched(false); setError(null); setNoMore(false);
     cache = emptyCache();
   }
@@ -436,6 +450,14 @@ export default function SearchScreen({ nav, params = {} }) {
               <Text style={styles.hello}>
                 {items.length > 0 ? "Nothing here matches these filters." : `No results for “${cache.q}”. Try another spelling or a shorter query.`}
               </Text>
+              {items.length > 0 ? (
+                <TouchableOpacity style={styles.retry} onPress={() => {
+                  if (instantOnly) setSetting("instantOnly", false);
+                  setFormatPick(null);
+                }}>
+                  <Text style={styles.retryTxt}>Clear filters</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           }
           ListFooterComponent={
@@ -520,7 +542,7 @@ function HeroCard({ book, playing, onOpen, onPlayPause }) {
           <Text style={styles.heroMeta} numberOfLines={1}>{meta}</Text>
         </View>
         <TouchableOpacity onPress={() => onPlayPause(playing)} accessibilityLabel={playing ? "Pause" : `Resume ${book.title}`} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <LinearGradient colors={theme.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroPlay}>
+          <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroPlay}>
             <PlayPauseIcon playing={playing} size={20} />
           </LinearGradient>
         </TouchableOpacity>
@@ -593,7 +615,7 @@ const styles = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 12, height: 44,
   },
   input: { flex: 1, color: theme.text, height: 44 },
-  searchBtn: { backgroundColor: theme.accent, borderRadius: 10, paddingHorizontal: 18, justifyContent: "center", minWidth: 46, alignItems: "center" },
+  searchBtn: { backgroundColor: theme.button, borderRadius: 10, paddingHorizontal: 18, justifyContent: "center", minWidth: 46, alignItems: "center" },
   searchBtnTxt: { color: "#fff", fontWeight: "700" },
   dlPill: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 10, marginBottom: 12 },
   dlPillTxt: { color: theme.text, fontSize: 13, flex: 1 },
@@ -635,7 +657,7 @@ const styles = StyleSheet.create({
   moreUploadsTxt: { color: theme.accent, fontWeight: "600", fontSize: 13 },
   filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 6 },
   filterChip: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
-  filterChipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
+  filterChipActive: { backgroundColor: theme.button, borderColor: theme.button },
   filterChipTxt: { color: theme.sub, fontWeight: "600", fontSize: 13 },
   filterChipTxtActive: { color: "#fff" },
   err: { color: "#f87171", textAlign: "center" },

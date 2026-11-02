@@ -4,20 +4,18 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 import * as Notifications from "expo-notifications";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { useIsPlaying, useActiveMediaItem, useProgress } from "@rntp/player";
 
 import { theme } from "./src/theme";
 import { getPrefix } from "./src/config";
-import { checkpointPlayback, closeBook, pause, play, seekBy, usePlaybackSnapshot, refreshCarBrowse } from "./src/player";
+import { setupPlayer, checkpointPlayback, closeBook, pause, play, seekBy, usePlaybackSnapshot, refreshCarBrowse } from "./src/player";
 import { subscribe as subscribeDownloads } from "./src/downloadStore";
 import { registerBackgroundCheck } from "./src/backgroundCheck";
-import { notificationsAllowed } from "./src/notify";
 import { appVersion } from "./src/api";
 import { cmpVersion } from "./src/version";
 import { getSettings, useSettings } from "./src/settings";
-import { removeComicsData, sweepFinishedDownloads, sweepOrphanedDownloads } from "./src/downloads";
+import { resumePendingDownloads, removeComicsData, sweepFinishedDownloads, sweepOrphanedDownloads } from "./src/downloads";
 import { initializeApplication } from "./src/startup";
 import { flushListening } from "./src/stats";
 import { checkWaiting } from "./src/waiting";
@@ -28,6 +26,7 @@ import { HomeIcon, LibraryIcon, SlidersIcon, JumpIcon } from "./src/icons";
 import { STATUS_PAD, LayoutContext, tabBarMetrics } from "./src/layout";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 import { WhatsNewSheet } from "./src/components/WhatsNewSheet";
+import { StartupNotice } from "./src/components/StartupNotice";
 import { whatsNewPending, markWhatsNewSeen } from "./src/whatsNew";
 
 import SetupScreen from "./screens/SetupScreen";
@@ -55,7 +54,6 @@ const SCREENS = {
 const FULL_SCREEN = ["player", "car", "setup"];
 const TAB_ROOTS = ["search", "library", "settings"];
 const WAITING_CHECK_MS = 3 * 60 * 1000;
-const NOTIFICATIONS_ASKED_KEY = "bustaudio_notifications_asked";
 
 // Notifications that arrive while the app is open still show.
 Notifications.setNotificationHandler({
@@ -65,12 +63,13 @@ Notifications.setNotificationHandler({
 function Application() {
   const insets = useSafeAreaInsets();
   const [booting, setBooting] = useState(true);
+  const [startupWarnings, setStartupWarnings] = useState([]);
   const [stack, setStack] = useState([{ name: "search" }]);
   const [otaReady, setOtaReady] = useState(false);
   const [nativeUpdate, setNativeUpdate] = useState(null); // { apkUrl, latestVersion }
   const [whatsNew, setWhatsNew] = useState(false);
   const stackRef = useRef(stack);
-  stackRef.current = stack;
+  useEffect(() => { stackRef.current = stack; }, [stack]);
 
   const navigate = useCallback((name, params = {}) => setStack((s) => [...s, { name, params }]), []);
   const goBack = useCallback(() => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s)), []);
@@ -87,7 +86,8 @@ function Application() {
       else if (await whatsNewPending()) setWhatsNew(true);
       // Housekeeping waits for the background start-up (download resume) so
       // it never races the jobs being re-attached.
-      await startup.background.catch(() => {});
+      const warnings = await startup.background.catch(() => []);
+      setStartupWarnings(warnings.filter((warning) => warning.stage === "player" || warning.stage === "downloads"));
       // Free the files of books that were listened to the end, if enabled.
       if (getSettings().autoDeleteFinished) {
         await sweepFinishedDownloads().catch(() => {});
@@ -196,19 +196,6 @@ function Application() {
     return () => sub.remove();
   }, [booting, navigate, reset]);
 
-  // Ask once for permission to notify (Android 13+ needs it), after the
-  // first-launch "What's new" is out of the way.
-  useEffect(() => {
-    if (booting || whatsNew) return undefined;
-    const timer = setTimeout(async () => {
-      if (await AsyncStorage.getItem(NOTIFICATIONS_ASKED_KEY).catch(() => "1")) return;
-      await AsyncStorage.setItem(NOTIFICATIONS_ASKED_KEY, "1").catch(() => {});
-      const settings = getSettings();
-      if (settings.notifyReady !== false || settings.notifyReleases !== false) notificationsAllowed(true).catch(() => {});
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [booting, whatsNew]);
-
   // While the app is open, look in on books waiting for TorBox now and then.
   useEffect(() => {
     if (booting) return undefined;
@@ -217,6 +204,12 @@ function Application() {
     }, WAITING_CHECK_MS);
     return () => clearInterval(id);
   }, [booting]);
+
+  async function retryStartup(stage) {
+    if (stage === "player") await setupPlayer();
+    else if (stage === "downloads") await resumePendingDownloads();
+  }
+  const clearStartupWarning = (stage) => setStartupWarnings((warnings) => warnings.filter((warning) => warning.stage !== stage));
 
   if (booting) {
     return (
@@ -252,7 +245,8 @@ function Application() {
           onDismiss={() => setNativeUpdate(null)}
         />
       )}
-      <LayoutContext.Provider value={{ screenTopPad: bannerVisible ? 12 : STATUS_PAD + 12 }}>
+      {startupWarnings.length > 0 ? <StartupNotice key={startupWarnings[0].stage} warning={startupWarnings[0]} onRetry={retryStartup} onResolve={clearStartupWarning} onDismiss={clearStartupWarning} topInset={bannerVisible ? 0 : STATUS_PAD} /> : null}
+      <LayoutContext.Provider value={{ screenTopPad: bannerVisible || startupWarnings.length > 0 ? 12 : STATUS_PAD + 12 }}>
         <View style={{ flex: 1 }}>
           <Screen nav={nav} params={top.params || {}} />
           {showMini && <MiniPlayer nav={nav} />}
@@ -402,7 +396,7 @@ const styles = StyleSheet.create({
   miniTitle: { color: theme.text, fontWeight: "600" },
   miniSub: { color: theme.dim, fontSize: 12 },
   miniJump: { paddingHorizontal: 2 },
-  miniBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.accent, alignItems: "center", justifyContent: "center" },
+  miniBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.button, alignItems: "center", justifyContent: "center" },
   miniTrack: { height: 3, backgroundColor: theme.border },
   miniFill: { height: 3, backgroundColor: theme.accent },
   tabBar: {
@@ -421,7 +415,7 @@ const styles = StyleSheet.create({
   toastTxt: { color: theme.bg, fontWeight: "600", textAlign: "center" },
   updateBar: {
     flexDirection: "row", alignItems: "center", gap: 10,
-    backgroundColor: theme.accent, paddingHorizontal: 14, paddingTop: STATUS_PAD + 8, paddingBottom: 12,
+    backgroundColor: theme.button, paddingHorizontal: 14, paddingTop: STATUS_PAD + 8, paddingBottom: 12,
   },
   updateText: { color: "#fff", fontWeight: "600", flex: 1 },
   updateDismiss: { paddingHorizontal: 8, paddingVertical: 6 },

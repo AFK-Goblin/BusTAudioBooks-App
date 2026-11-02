@@ -75,7 +75,7 @@ export default function CarScreen({ nav }) {
               <JumpIcon dir="back" seconds={settings.jumpBack} size={72} color={theme.text} />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => (playing ? pause() : play()).catch(() => {})} accessibilityLabel={playing ? "Pause" : "Play"} activeOpacity={0.85}>
-              <LinearGradient colors={theme.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
+              <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
                 <PlayPauseIcon playing={playing} size={52} />
               </LinearGradient>
             </TouchableOpacity>

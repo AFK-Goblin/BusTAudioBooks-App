@@ -27,12 +27,19 @@ export function startTracking(id, meta) {
     i: 0,
     count: meta.count || 1,
     pct: 0, // whole book, not the current file
-    status: "downloading",
+    status: "preparing",
     book: meta.book,
     files: meta.files,
     // Per-file sizes from the server, when it reports them (2.2+).
     sizes: (meta.files || []).map((f) => (f && f.size > 0 ? f.size : 0)),
   };
+  emit();
+}
+
+export function beginTransfer(id) {
+  const a = active[id];
+  if (!a) return;
+  a.status = "downloading";
   emit();
 }
 
@@ -43,6 +50,7 @@ function sum(values) {
 export function reportProgress(id, i, count, written, total) {
   const a = active[id];
   if (!a) return;
+  a.status = "downloading";
   a.i = i;
   a.count = count;
   const sizes = a.sizes || [];

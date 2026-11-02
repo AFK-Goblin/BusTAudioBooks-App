@@ -56,10 +56,19 @@ export function createNativePlayerPort(
   player: PlayerDependency = TrackPlayer as unknown as PlayerDependency,
   events: EventMap = defaultEvents,
 ): NativePlayerPort {
+  let setupAttempt: Promise<void> | undefined;
   return {
-    async setup(config) {
-      await player.setupPlayer?.(config);
-      await waitUntilConnected(player);
+    setup(config) {
+      if (!setupAttempt) {
+        setupAttempt = (async () => {
+          await player.setupPlayer?.(config);
+          await waitUntilConnected(player);
+        })().catch((error) => {
+          setupAttempt = undefined;
+          throw error;
+        });
+      }
+      return setupAttempt;
     },
     async configureCommands(commands) { await player.setCommands?.(commands); },
     async getQueue() { return await player.getQueue?.() ?? []; },

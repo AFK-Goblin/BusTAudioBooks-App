@@ -1,7 +1,7 @@
 /* global test, beforeEach */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const mockDisk = { dirs: new Set(), deleted: [] };
+const mockDisk = { dirs: new Set(), deleted: [], files: new Map() };
 
 // Notices start a timer that would outlive the test.
 jest.mock("../toast", () => ({ showToast: jest.fn() }));
@@ -9,7 +9,7 @@ jest.mock("expo-file-system/legacy", () => ({
   cacheDirectory: "file:///cache/",
   makeDirectoryAsync: jest.fn(async (uri) => { mockDisk.dirs.add(uri); }),
   deleteAsync: jest.fn(async (uri) => { mockDisk.deleted.push(uri); }),
-  getInfoAsync: jest.fn(async () => ({ exists: false })),
+  getInfoAsync: jest.fn(async (uri) => mockDisk.files.has(uri) ? { exists: true, isDirectory: false, size: mockDisk.files.get(uri) } : { exists: false }),
   readDirectoryAsync: jest.fn(async (uri) => {
     const prefix = `${uri}/`;
     return [...mockDisk.dirs].filter((d) => d.startsWith(prefix)).map((d) => d.slice(prefix.length));
@@ -34,7 +34,7 @@ jest.mock("@kesha-antonov/react-native-background-downloader", () => ({
       start() {
         if (mockNative.notificationCancel) { setTimeout(() => handlers.error?.({ error: "Cancelled", errorCode: -1 }), 0); return; }
         if (mockNative.hang) { setTimeout(() => handlers.progress?.({ bytesDownloaded: 40, bytesTotal: 100 }), 0); return; }
-        setTimeout(() => { handlers.progress?.({ bytesDownloaded: 50, bytesTotal: 100 }); handlers.done?.(); }, 0);
+        setTimeout(() => { mockDisk.files.set(`file://${options.destination}`, mockNative.completedSize); handlers.progress?.({ bytesDownloaded: 50, bytesTotal: mockNative.completedSize }); handlers.done?.(); }, 0);
       },
       stop: jest.fn(async () => { mockNative.stopped.push(options.id); }),
     };
@@ -57,6 +57,8 @@ const longB = `tbab:${"x".repeat(90)}B`;
 beforeEach(async () => {
   await AsyncStorage.clear();
   mockDisk.dirs.clear();
+  mockDisk.files.clear();
+  mockNative.completedSize = 100;
   mockDisk.deleted.length = 0;
   mockTasks.length = 0;
   native.createDownloadTask.mockClear();
@@ -75,13 +77,14 @@ test("short ids keep their legacy folder; long ids no longer collide", () => {
 });
 
 test("a download records its folder and keeps filename and size on local files", async () => {
+  mockNative.completedSize = 1234;
   const entry = await downloads.downloadBook(
     { id: longA, title: "A" },
     [{ title: "Part 1", url: "https://cdn.example/1", filename: "Part 1.mp3", size: 1234 }],
   );
   const dir = downloads.storageDirFor(longA);
   expect(entry.storageDir).toBe(dir);
-  expect(entry.files).toEqual([{ title: "Part 1", uri: `file:///data/docs/bustaudio/${dir}/Part_1.mp3`, filename: "Part 1.mp3", size: 1234 }]);
+  expect(entry.files).toEqual([{ title: "Part 1", uri: `file:///data/docs/bustaudio/${dir}/0001-Part_1.mp3`, filename: "Part 1.mp3", size: 1234 }]);
   expect(native.createDownloadTask).toHaveBeenCalledWith(expect.objectContaining({ id: `${dir}-0` }));
 });
 
@@ -110,6 +113,7 @@ test("a job saved by an older build re-attaches by its legacy task ids", async (
   const legacyTaskId = `${downloads.safe(longA)}-0`;
   const attached = { id: legacyTaskId, state: "DONE" };
   mockTasks.push(attached);
+  mockDisk.files.set(`${ROOT}/${downloads.safe(longA)}/a.mp3`, 100);
   await downloads.resumePendingDownloads();
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -276,4 +280,178 @@ describe("retry", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(native.createDownloadTask.mock.calls.map(([o]) => o.url)).toEqual(["https://cdn/expired-a", "https://cdn/expired-b"]);
   });
+});
+
+describe("download integrity", () => {
+  const one = [{ url: "https://cdn/part", filename: "part.mp3", size: 100 }];
+  async function recover(id, files, extra = {}) {
+    await AsyncStorage.setItem("bustaudio_dljobs", JSON.stringify({ [id]: { book: { id, title: id }, files, ...extra } }));
+    await downloads.resumePendingDownloads();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  test.each([40, 120])("redownloads a recovered %i-byte file instead of publishing an incomplete book", async (size) => {
+    mockDisk.files.set(`${ROOT}/partial/part.mp3`, size);
+    await recover("partial", one);
+    expect(native.createDownloadTask).toHaveBeenCalledTimes(1);
+    expect(mockDisk.files.get(`${ROOT}/partial/part.mp3`)).toBe(100);
+    expect((await library.getBook("partial")).downloaded).toBe(true);
+  });
+
+  test("unknown-size files without completion evidence are downloaded again", async () => {
+    mockDisk.files.set(`${ROOT}/unknown/part.mp3`, 40);
+    await recover("unknown", [{ url: "https://cdn/part", filename: "part.mp3" }]);
+    expect(native.createDownloadTask).toHaveBeenCalledTimes(1);
+  });
+
+  test("reuses a validated finished part even when the server did not report its size", async () => {
+    mockDisk.files.set(`${ROOT}/verified/0001-part.mp3`, 100);
+    await recover("verified", [{ url: "https://cdn/part", filename: "part.mp3" }], { namingVersion: 2, completedParts: { 0: { size: 100 } } });
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+    expect((await library.getBook("verified")).files[0]).toMatchObject({ uri: `${ROOT}/verified/0001-part.mp3`, size: 100 });
+  });
+
+  test("a changed file invalidates its persisted completion evidence", async () => {
+    mockDisk.files.set(`${ROOT}/changed/0001-part.mp3`, 40);
+    await recover("changed", one, { namingVersion: 2, completedParts: { 0: { size: 100 } } });
+    expect(native.createDownloadTask).toHaveBeenCalledTimes(1);
+  });
+
+  test("recovered native DONE still needs its expected complete file", async () => {
+    mockDisk.files.set(`${ROOT}/bad-done/part.mp3`, 40);
+    mockTasks.push({ id: "bad-done-0", state: "DONE" });
+    await recover("bad-done", one);
+    expect(await library.getBook("bad-done")).toBeNull();
+  });
+
+  test("new parts with colliding sanitized or truncated filenames keep distinct local files", async () => {
+    const names = ["a b.mp3", "a_b.mp3", `${"a".repeat(90)}1.mp3`, `${"a".repeat(90)}2.mp3`];
+    const entry = await downloads.downloadBook({ id: "collisions", title: "C" }, names.map((filename, i) => ({ filename, url: `https://cdn/${i}` })));
+    expect(new Set(entry.files.map((f) => f.uri)).size).toBe(4);
+    expect(entry.files.map((f) => f.filename)).toEqual(names);
+  });
+
+  test("legacy unfinished jobs restart into their original destination", async () => {
+    await recover("legacy", one);
+    expect(native.createDownloadTask).toHaveBeenCalledWith(expect.objectContaining({ destination: "/data/docs/bustaudio/legacy/part.mp3" }));
+  });
+
+  test("a successful native callback cannot publish a file of the wrong known size", async () => {
+    mockNative.completedSize = 40;
+    await expect(downloads.downloadBook({ id: "truncated", title: "T" }, one)).rejects.toThrow(/incomplete|size/i);
+    expect(await library.getBook("truncated")).toBeNull();
+  });
+
+  test("simultaneous starts reserve the book before either persistence finishes", async () => {
+    const book = { id: "simultaneous", title: "S" };
+    const results = await Promise.allSettled([downloads.downloadBook(book, one), downloads.downloadBook(book, one)]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(native.createDownloadTask).toHaveBeenCalledTimes(1);
+  });
+
+  test("failed job storage prevents native work and rejects durable acceptance", async () => {
+    AsyncStorage.setItem.mockRejectedValueOnce(new Error("storage full"));
+    await expect(downloads.enqueueDownload({ id: "storage-fail", title: "S" }, one)).rejects.toThrow("storage full");
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+    expect(await library.getBook("storage-fail")).toBeNull();
+  });
+
+  test("acceptance waits for persistence but does not wait for transfer completion", async () => {
+    const original = AsyncStorage.setItem.getMockImplementation();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    AsyncStorage.setItem.mockImplementationOnce(async (...args) => { await gate; return original(...args); });
+    mockNative.hang = true;
+    let accepted = false;
+    const pending = downloads.enqueueDownload({ id: "acceptance", title: "A" }, one).then(() => { accepted = true; });
+    await tick();
+    expect(accepted).toBe(false);
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+    release();
+    await pending;
+    expect(JSON.parse(await AsyncStorage.getItem("bustaudio_dljobs")).acceptance.namingVersion).toBe(2);
+    expect(await library.getBook("acceptance")).toBeNull();
+    await downloads.cancelDownload("acceptance");
+    await tick();
+  });
+});
+
+describe("download setup and recovery boundaries", () => {
+  const one = [{ url: "https://cdn/part", filename: "part.mp3", size: 100 }];
+
+  test("a stale pending job never overwrites an already completed offline copy", async () => {
+    const saved = await library.upsertBook({ id: "already-local", title: "A", downloaded: true, storageDir: "old-folder", files: [{ uri: `${ROOT}/old-folder/original.mp3`, size: 100 }] });
+    await AsyncStorage.setItem("bustaudio_dljobs", JSON.stringify({ "already-local": { book: { id: "already-local", title: "A" }, files: one } }));
+    await downloads.resumePendingDownloads();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+    expect(await library.getBook("already-local")).toEqual(saved);
+    expect(mockDisk.deleted).toEqual([]);
+  });
+
+  test("cancelling while disk inspection is pending never starts a new native transfer", async () => {
+    const disk = require("expo-file-system/legacy");
+    let release;
+    disk.getInfoAsync.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const done = downloads.downloadBook({ id: "cancel-preparing", title: "C" }, one);
+    await tick();
+    await downloads.cancelDownload("cancel-preparing");
+    release({ exists: false });
+    await expect(done).rejects.toBeInstanceOf(downloads.DownloadCancelled);
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+    expect(mockDisk.deleted).toContain(`${ROOT}/cancel-preparing`);
+  });
+
+  test("an unreadable job store cannot overwrite other pending jobs", async () => {
+    await AsyncStorage.setItem("bustaudio_dljobs", JSON.stringify({ other: { book: { id: "other" }, files: one } }));
+    AsyncStorage.getItem.mockRejectedValueOnce(new Error("storage unavailable"));
+    await expect(downloads.enqueueDownload({ id: "read-fail", title: "R" }, one)).rejects.toThrow("storage unavailable");
+    expect(Object.keys(JSON.parse(await AsyncStorage.getItem("bustaudio_dljobs")))).toEqual(["other"]);
+    expect(native.createDownloadTask).not.toHaveBeenCalled();
+  });
+
+  test("completion evidence is saved before advancing to the next part", async () => {
+    const done = downloads.downloadBook({ id: "checkpoint", title: "C" }, [...one, { ...one[0], filename: "second.mp3" }], (index) => {
+      if (index === 0) mockNative.hang = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(JSON.parse(await AsyncStorage.getItem("bustaudio_dljobs")).checkpoint.completedParts).toEqual({ 0: { size: 100 } });
+    await downloads.cancelDownload("checkpoint");
+    await expect(done).rejects.toBeInstanceOf(downloads.DownloadCancelled);
+  });
+
+  test("preparing remains visible until native work reports activity", async () => {
+    const store = require("../downloadStore");
+    let rows;
+    const unsubscribe = store.subscribe((items) => { rows = items; });
+    mockNative.hang = true;
+    await downloads.enqueueDownload({ id: "visible-preparing", title: "P" }, one);
+    expect(rows.find((d) => d.id === "visible-preparing").status).toBe("preparing");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(rows.find((d) => d.id === "visible-preparing").status).toBe("downloading");
+    await downloads.cancelDownload("visible-preparing");
+    await tick();
+    unsubscribe();
+  });
+});
+
+test("failed native discovery leaves pending transfers untouched for later recovery", async () => {
+  const job = { book: { id: "discovery", title: "D" }, files: [{ url: "https://cdn/part", filename: "part.mp3" }] };
+  await AsyncStorage.setItem("bustaudio_dljobs", JSON.stringify({ discovery: job }));
+  mockDisk.files.set(`${ROOT}/discovery/part.mp3`, 40);
+  native.getExistingDownloadTasks.mockRejectedValueOnce(new Error("native unavailable"));
+  await expect(downloads.resumePendingDownloads()).rejects.toThrow("native unavailable");
+  expect(native.createDownloadTask).not.toHaveBeenCalled();
+  expect(mockDisk.deleted).toEqual([]);
+  expect(JSON.parse(await AsyncStorage.getItem("bustaudio_dljobs"))).toEqual({ discovery: job });
+});
+
+test("a cleanup storage read failure cannot prevent cancellation file cleanup", async () => {
+  mockNative.hang = true;
+  const done = downloads.downloadBook({ id: "cleanup-read", title: "C" }, [{ url: "https://cdn/part", filename: "part.mp3" }]);
+  await tick();
+  AsyncStorage.getItem.mockRejectedValueOnce(new Error("storage unavailable"));
+  await downloads.cancelDownload("cleanup-read");
+  await expect(done).rejects.toBeInstanceOf(downloads.DownloadCancelled);
+  expect(mockDisk.deleted).toContain(`${ROOT}/cleanup-read`);
 });

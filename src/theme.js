@@ -2,11 +2,11 @@ import * as SecureStore from "expo-secure-store";
 
 // Accent colours you can pick in Settings → Appearance.
 export const ACCENTS = {
-  violet: { name: "Violet", accent: "#8b5cf6", accent2: "#6d28d9" },
-  blue: { name: "Blue", accent: "#3b82f6", accent2: "#1d4ed8" },
-  teal: { name: "Teal", accent: "#14b8a6", accent2: "#0f766e" },
-  orange: { name: "Orange", accent: "#f97316", accent2: "#c2410c" },
-  pink: { name: "Pink", accent: "#ec4899", accent2: "#be185d" },
+  violet: { name: "Violet", accent: "#8b5cf6", accent2: "#6d28d9", button: "#7c3aed" },
+  blue: { name: "Blue", accent: "#3b82f6", accent2: "#1d4ed8", button: "#2563eb" },
+  teal: { name: "Teal", accent: "#14b8a6", accent2: "#0f766e", button: "#0f766e" },
+  orange: { name: "Orange", accent: "#f97316", accent2: "#c2410c", button: "#c2410c" },
+  pink: { name: "Pink", accent: "#ec4899", accent2: "#be185d", button: "#be185d" },
 };
 const ACCENT_KEY = "bustaudio_accent";
 
@@ -30,7 +30,7 @@ export function saveAccent(key) {
 }
 
 export const appliedAccent = storedAccent();
-const { accent, accent2 } = ACCENTS[appliedAccent];
+const { accent, accent2, button } = ACCENTS[appliedAccent];
 
 export const theme = {
   bg: "#15101c",
@@ -41,6 +41,8 @@ export const theme = {
   dim: "#8f859e",
   accent,
   accent2,
+  button,
+  buttonGradient: [button, accent2],
   good: "#22c55e",
   warn: "#f59e0b",
   danger: "#f87171",

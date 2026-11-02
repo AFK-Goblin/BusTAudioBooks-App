@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, memo } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Switch, Share, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Slider from "@react-native-community/slider";
 import TrackPlayer, { useProgress, useIsPlaying, useActiveMediaItem } from "@rntp/player";
+import { ScrollingTitle, useTitleMotion } from "../src/components/ScrollingTitle";
 import { theme } from "../src/theme";
 import { formatTime, formatDuration, formatSpeed, parseTime } from "../src/format";
 import { usePlaybackSnapshot, setRate, setSleep, play, pause, seekTo, seekBy, skipToIndex, retryPlayback, closeBook } from "../src/player";
@@ -50,9 +52,12 @@ export default function PlayerScreen({ nav }) {
   const [gotoText, setGotoText] = useState("");
   const [gotoError, setGotoError] = useState(null);
   const [chapterFilter, setChapterFilter] = useState("");
-  const { width } = useWindowDimensions();
-  const coverSize = Math.max(180, Math.min(width - 96, 300));
+  const { width, height, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const compact = height < 740 || fontScale > 1.2;
+  const coverSize = Math.max(80, Math.min(width - 96, 300, (height - topPad - insets.bottom) * 0.34 / Math.max(1, fontScale)));
   const downloads = useDownloads();
+  const titleMotion = useTitleMotion();
 
   const files = (book && book.files) || [];
   const activeIdx = track && track.extras ? Number(track.extras.trackIndex) || 0 : snapshot.activeTrackIndex || 0;
@@ -189,6 +194,7 @@ export default function PlayerScreen({ nav }) {
   }
 
   async function goToBookmark(bm) {
+    setSheet(null);
     noteJump(bm.trackIndex || 0, bm.position || 0);
     try {
       if ((bm.trackIndex || 0) !== activeIdx) await skipToIndex(bm.trackIndex || 0);
@@ -212,7 +218,7 @@ export default function PlayerScreen({ nav }) {
     if (!book || !editing) return;
     await setBookmarkNote(book.id, editing.bookmark.createdAt, text);
     setEntry(await getBook(book.id));
-    setSheet(null);
+    setSheet("bookmarks");
     setEditing(null);
   }
 
@@ -282,7 +288,7 @@ export default function PlayerScreen({ nav }) {
     return "Sleep";
   }
 
-  const subtitle = chapter ? chapter.title : files.length > 1 ? `Part ${activeIdx + 1} of ${files.length}` : (book && book.author) || "";
+  const subtitle = chapter ? chapter.title : files.length > 1 ? (files[activeIdx]?.title || `Part ${activeIdx + 1} of ${files.length}`) : (book && book.author) || "";
   const canBrowse = !!chapters || files.length > 1;
   const leftLine = chapter && chapterLeft != null
     ? `Ch ${chapterIdx + 1}/${chapters.length} · ${formatDuration(chapterLeft / rate)} left`
@@ -292,7 +298,7 @@ export default function PlayerScreen({ nav }) {
     : "";
 
   return (
-    <View style={[styles.wrap, { paddingTop: topPad }]}>
+    <View style={[styles.wrap, { paddingTop: topPad, paddingBottom: insets.bottom + 8, paddingHorizontal: width < 360 ? 16 : 24 }]}>
       <CoverBackdrop uri={book && book.poster} />
       <View style={styles.header}>
         <TouchableOpacity onPress={nav.goBack} style={styles.headerBtn} accessibilityLabel="Close player" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -304,18 +310,18 @@ export default function PlayerScreen({ nav }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
-        <View style={styles.art}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }} showsVerticalScrollIndicator={false}>
+        <View style={[styles.art, compact && { marginTop: 4 }]}>
           <View style={styles.artShadow}>
             <CoverArt uri={book && book.poster} size={coverSize} radius={16} />
           </View>
         </View>
 
         {seriesLabel ? <Text style={styles.seriesKicker} numberOfLines={1}>{seriesLabel}</Text> : null}
-        <Text style={[styles.title, seriesLabel && { marginTop: 4 }]} numberOfLines={2}>{(book && book.title) || (track && track.title) || ""}</Text>
+        <Text style={[styles.title, compact && { marginTop: 10 }, seriesLabel && { marginTop: 4 }]} numberOfLines={2}>{(book && book.title) || (track && track.title) || ""}</Text>
         {canBrowse ? (
           <TouchableOpacity style={styles.partBtn} onPress={() => { setChapterFilter(""); setSheet("chapters"); }}>
-            <Text style={styles.sub} numberOfLines={1}>{subtitle}</Text>
+            <ScrollingTitle animate={titleMotion && !sheet} style={{ flex: 1, marginTop: 6 }} textStyle={{ color: theme.sub, textAlign: "center" }}>{subtitle}</ScrollingTitle>
             <ChevronIcon dir="down" size={13} color={theme.sub} />
           </TouchableOpacity>
         ) : (
@@ -373,6 +379,8 @@ export default function PlayerScreen({ nav }) {
           </View>
         ) : null}
         <Slider
+          accessibilityLabel={`Position in ${scope === "chapter" ? "chapter" : files.length > 1 ? "part" : "book"}`}
+          accessibilityValue={{ text: durationKnown ? `${formatTime(Math.max(0, pos - rangeStart))} of ${formatTime(rangeEnd - rangeStart)}` : "Loading duration" }}
           style={{ width: "100%", height: 40, marginTop: chapters && durationKnown ? 4 : 14 }}
           minimumValue={durationKnown ? rangeStart : 0}
           maximumValue={durationKnown ? rangeEnd : 1}
@@ -383,7 +391,7 @@ export default function PlayerScreen({ nav }) {
           thumbTintColor={durationKnown ? theme.accent : "transparent"}
           onSlidingStart={() => setSeek(progress.position)}
           onValueChange={(v) => setSeek(v)}
-          onSlidingComplete={async (v) => { noteJump(activeIdx, v); await seekTo(v); setSeek(null); }}
+          onSlidingComplete={async (v) => { noteJump(activeIdx, v); try { await seekTo(v); } catch (_) {} finally { setSeek(null); } }}
         />
         <View style={styles.times}>
           <TouchableOpacity
@@ -412,8 +420,10 @@ export default function PlayerScreen({ nav }) {
           </View>
         ) : null}
         {nextChapter ? (
-          <Text style={styles.upNext} numberOfLines={1}>Up next · {nextChapter.title}</Text>
+          <ScrollingTitle animate={titleMotion && !sheet} style={{ marginTop: 8 }} textStyle={{ color: theme.dim, fontSize: 12, textAlign: "center" }}>{`Up next · ${nextChapter.title}`}</ScrollingTitle>
         ) : null}
+
+      </ScrollView>
 
         <View style={styles.controls}>
           <TouchableOpacity style={[styles.ctrl, !hasPrev && styles.ctrlOff]} disabled={!hasPrev} onPress={() => previous().catch(() => {})} accessibilityLabel={chapters ? "Previous chapter" : "Previous part"}>
@@ -428,11 +438,11 @@ export default function PlayerScreen({ nav }) {
           </TouchableOpacity>
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={() => (playing ? pause() : play())}
+            onPress={() => (playing ? pause() : play()).catch(() => {})}
             onLongPress={dropBookmark}
             accessibilityLabel={playing ? "Pause" : "Play"}
           >
-            <LinearGradient colors={theme.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
+            <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.play}>
               <PlayPauseIcon playing={playing} size={30} />
             </LinearGradient>
           </TouchableOpacity>
@@ -449,7 +459,9 @@ export default function PlayerScreen({ nav }) {
         </View>
 
         <View style={styles.extras}>
-          <TouchableOpacity style={styles.chip} onPress={() => setSheet("speed")}>
+          {canBrowse ? <TouchableOpacity style={styles.chip} onPress={() => { setChapterFilter(""); setSheet("chapters"); }} accessibilityRole="button" accessibilityLabel="Open chapters"><Text style={styles.chipTxt}>Chapters</Text></TouchableOpacity> : null}
+          <TouchableOpacity style={styles.chip} onPress={() => setSheet("bookmarks")} accessibilityRole="button" accessibilityLabel="Open bookmarks"><Text style={styles.chipTxt}>Bookmarks{bookmarks.length ? ` · ${bookmarks.length}` : ""}</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.chip} onPress={() => setSheet("speed")} accessibilityRole="button" accessibilityLabel={`Playback speed, ${formatSpeed(rate)}`}>
             <Text style={styles.chipTxt}>{formatSpeed(rate)}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.chip, bmFlash && styles.chipActive]} onPress={dropBookmark}>
@@ -465,7 +477,7 @@ export default function PlayerScreen({ nav }) {
             </View>
           ) : activeDl && activeDl.status !== "error" ? (
             <View style={styles.chip}>
-              <Text style={styles.chipTxt}>Downloading {activeDl.pct}%</Text>
+              <Text style={styles.chipTxt}>{activeDl.status === "preparing" ? "Preparing download…" : `Downloading ${activeDl.pct}%`}</Text>
             </View>
           ) : isStreamable ? (
             <TouchableOpacity style={[styles.chip, styles.chipRow]} onPress={downloadThis}>
@@ -475,10 +487,26 @@ export default function PlayerScreen({ nav }) {
           ) : null}
         </View>
 
-        {bookmarks.length > 0 && (
+
+
+      {undo ? (
+        <TouchableOpacity
+          style={styles.undo}
+          onPress={undoJump}
+          accessibilityRole="button"
+          accessibilityLabel={`Undo jump: back to ${formatTime(undo.position)}${undo.trackIndex !== activeIdx ? ` in part ${undo.trackIndex + 1}` : ""}`}
+        >
+          <Text style={styles.undoTxt}>
+            ↶ Back to {undo.trackIndex !== activeIdx ? `part ${undo.trackIndex + 1} · ` : ""}{formatTime(undo.position)}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <Sheet visible={sheet === "bookmarks"} onClose={() => setSheet(null)} title="Bookmarks">
+        {bookmarks.length > 0 ? (
           <View style={styles.chapters}>
             <View style={styles.headRow}>
-              <Text style={styles.chaptersHead}>Bookmarks</Text>
+              <Text style={styles.chaptersHead}>{bookmarks.length} saved {bookmarks.length === 1 ? "moment" : "moments"}</Text>
               <TouchableOpacity
                 onPress={() => Share.share({ title: book.title, message: bookmarksText({ ...book, bookmarks }) }).catch(() => {})}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -497,44 +525,17 @@ export default function PlayerScreen({ nav }) {
                   </Text>
                   {bm.note ? <Text style={styles.bmNote} numberOfLines={2}>{bm.note}</Text> : null}
                 </View>
-                <TouchableOpacity onPress={() => editNote(bm)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }} accessibilityLabel="Edit note">
+                <TouchableOpacity onPress={() => editNote(bm)} style={styles.iconAction} accessibilityRole="button" accessibilityLabel="Edit note">
                   <Text style={styles.bmEdit}>{bm.note ? "Edit" : "Note"}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => deleteBookmark(bm)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <TouchableOpacity onPress={() => deleteBookmark(bm)} style={styles.iconAction} accessibilityRole="button" accessibilityLabel={`Delete bookmark at ${formatTime(bm.position)}`}>
                   <CloseIcon size={12} color={theme.dim} />
                 </TouchableOpacity>
               </TouchableOpacity>
             ))}
           </View>
-        )}
-
-        {chapters && (
-          <View style={styles.chapters}>
-            <Text style={styles.chaptersHead}>{files.length > 1 ? `Chapters · part ${activeIdx + 1}` : "Chapters"}</Text>
-            <ChapterRows chapters={chapters} activeIndex={chapterIdx} playing={playing} total={durationKnown ? progress.duration : 0} onPick={jumpToChapter} />
-          </View>
-        )}
-
-        {files.length > 1 && (
-          <View style={styles.chapters}>
-            <Text style={styles.chaptersHead}>{chapters ? "Parts" : "Chapters"}</Text>
-            <PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} />
-          </View>
-        )}
-      </ScrollView>
-
-      {undo ? (
-        <TouchableOpacity
-          style={styles.undo}
-          onPress={undoJump}
-          accessibilityRole="button"
-          accessibilityLabel={`Undo jump: back to ${formatTime(undo.position)}${undo.trackIndex !== activeIdx ? ` in part ${undo.trackIndex + 1}` : ""}`}
-        >
-          <Text style={styles.undoTxt}>
-            ↶ Back to {undo.trackIndex !== activeIdx ? `part ${undo.trackIndex + 1} · ` : ""}{formatTime(undo.position)}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
+        ) : <Text style={styles.sheetNote}>No bookmarks yet. Tap + Bookmark to save this moment.</Text>}
+      </Sheet>
 
       <ActionSheet
         visible={menu}
@@ -559,7 +560,7 @@ export default function PlayerScreen({ nav }) {
       />
 
       <Sheet visible={sheet === "chapters"} onClose={() => setSheet(null)} title={chapters ? "Chapters" : "Parts"}>
-        {(chapters ? chapters.length : files.length) > SEARCHABLE_LIST ? (
+        {((chapters ? chapters.length : 0) + files.length) > SEARCHABLE_LIST ? (
           <TextInput
             style={styles.findInput}
             value={chapterFilter}
@@ -569,9 +570,10 @@ export default function PlayerScreen({ nav }) {
             autoCorrect={false}
           />
         ) : null}
-        {chapters
-          ? <ChapterRows chapters={chapters} activeIndex={chapterIdx} playing={playing} total={durationKnown ? progress.duration : 0} onPick={jumpToChapter} filter={chapterFilter} />
-          : <PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} />}
+        {sheet === "chapters" && (chapters
+          ? <ChapterRows chapters={chapters} activeIndex={chapterIdx} playing={playing} total={durationKnown ? progress.duration : 0} onPick={jumpToChapter} filter={chapterFilter} animate={titleMotion} />
+          : <PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion} />)}
+        {sheet === "chapters" && chapters && files.length > 1 ? <><Text style={styles.chaptersHead}>Parts</Text><PartRows files={files} activeIndex={activeIdx} playing={playing} onPick={jumpToPart} filter={chapterFilter} animate={titleMotion} /></> : null}
       </Sheet>
 
       <Sheet visible={sheet === "goto"} onClose={() => setSheet(null)} title="Go to time">
@@ -696,7 +698,7 @@ export default function PlayerScreen({ nav }) {
 // Memoised: the player re-renders every second for the clock, and rebuilding
 // a 150-row part list each time made long books visibly sluggish.
 // Each chapter shows its length; the one playing shows how far into it you are.
-const ChapterRows = memo(function ChapterRows({ chapters, activeIndex, playing, total, onPick, filter }) {
+const ChapterRows = memo(function ChapterRows({ chapters, activeIndex, playing, total, onPick, filter, animate }) {
   const needle = (filter || "").trim().toLowerCase();
   return chapters.map((c, i) => {
     if (needle && !`${i + 1} ${c.title}`.toLowerCase().includes(needle)) return null;
@@ -706,7 +708,7 @@ const ChapterRows = memo(function ChapterRows({ chapters, activeIndex, playing, 
       <TouchableOpacity key={`${i}:${c.start}`} style={[styles.chapter, active && styles.chapterActive]} onPress={() => onPick(c)}>
         <Text style={[styles.chapterNum, active && { color: theme.accent }]}>{i + 1}</Text>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.chapterTitle, active && { color: theme.accent }]} numberOfLines={1}>{c.title}</Text>
+          <ScrollingTitle animate={animate} textStyle={{ color: active ? theme.accent : theme.text }}>{c.title}</ScrollingTitle>
           {active && length > 0 ? <ChapterProgress start={c.start} length={length} /> : null}
         </View>
         {active
@@ -724,7 +726,7 @@ function ChapterProgress({ start, length }) {
   return <View style={styles.chTrack}><View style={[styles.chFill, { width: `${pct}%` }]} /></View>;
 }
 
-const PartRows = memo(function PartRows({ files, activeIndex, playing, onPick, filter }) {
+const PartRows = memo(function PartRows({ files, activeIndex, playing, onPick, filter, animate }) {
   const needle = (filter || "").trim().toLowerCase();
   return files.map((f, i) => {
     if (needle && !`${i + 1} ${f.title || ""}`.toLowerCase().includes(needle)) return null;
@@ -732,9 +734,9 @@ const PartRows = memo(function PartRows({ files, activeIndex, playing, onPick, f
     return (
       <TouchableOpacity key={i} style={[styles.chapter, active && styles.chapterActive]} onPress={() => onPick(i)}>
         <Text style={[styles.chapterNum, active && { color: theme.accent }]}>{i + 1}</Text>
-        <Text style={[styles.chapterTitle, active && { color: theme.accent }]} numberOfLines={1}>
+        <ScrollingTitle animate={animate} style={{ flex: 1 }} textStyle={{ color: active ? theme.accent : theme.text }}>
           {f.title || `Part ${i + 1}`}
-        </Text>
+        </ScrollingTitle>
         {active && <PlayPauseIcon playing={playing} size={11} color={theme.accent} />}
       </TouchableOpacity>
     );
@@ -744,10 +746,10 @@ const PartRows = memo(function PartRows({ files, activeIndex, playing, onPick, f
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 24 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
-  headerBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: "#ffffff14" },
+  headerBtn: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: "#ffffff14" },
   headerTitle: { color: theme.sub, fontSize: 12, fontWeight: "700", letterSpacing: 1.5 },
   scopeRow: { flexDirection: "row", alignSelf: "center", backgroundColor: "#ffffff10", borderRadius: 14, padding: 3, marginTop: 14 },
-  scopeBtn: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 11 },
+  scopeBtn: { minHeight: 48, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 5, borderRadius: 11 },
   scopeBtnActive: { backgroundColor: "#ffffff22" },
   scopeTxt: { color: theme.dim, fontSize: 12, fontWeight: "600" },
   scopeTxtActive: { color: theme.text },
@@ -768,13 +770,13 @@ const styles = StyleSheet.create({
   title: { color: theme.text, fontSize: 20, fontWeight: "700", textAlign: "center", marginTop: 24 },
   seriesKicker: { color: theme.accent, fontSize: 12, fontWeight: "800", letterSpacing: 1, textAlign: "center", textTransform: "uppercase", marginTop: 22 },
   sub: { color: theme.sub, textAlign: "center", marginTop: 6, flexShrink: 1 },
-  partBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 2, paddingHorizontal: 12 },
+  partBtn: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 2, paddingHorizontal: 12 },
   banner: {
     flexDirection: "row", alignItems: "center", gap: 10, marginTop: 14, padding: 10,
     backgroundColor: "#00000040", borderWidth: 1, borderColor: "#ffffff1f", borderRadius: 10,
   },
   bannerTxt: { color: theme.text, flex: 1, fontSize: 13 },
-  bannerBtn: { backgroundColor: theme.accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 },
+  bannerBtn: { backgroundColor: theme.button, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 },
   bannerBtnTxt: { color: "#fff", fontWeight: "700" },
   endBanner: { flexDirection: "column", alignItems: "center", gap: 12, paddingVertical: 14 },
   endTitle: { flex: 0, fontSize: 15, fontWeight: "700" },
@@ -784,12 +786,13 @@ const styles = StyleSheet.create({
   times: { flexDirection: "row", justifyContent: "space-between", marginTop: -6 },
   time: { color: theme.dim, fontSize: 12 },
   timeSub: { color: theme.sub, fontSize: 12, marginTop: 10 },
-  controls: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 22 },
-  ctrl: { padding: 8 },
+  controls: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: 8 },
+  ctrl: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  iconAction: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
   ctrlOff: { opacity: 0.3 },
-  play: { width: 72, height: 72, borderRadius: 36, backgroundColor: theme.accent, alignItems: "center", justifyContent: "center" },
-  extras: { flexDirection: "row", justifyContent: "center", flexWrap: "wrap", gap: 10, marginTop: 26 },
-  chip: { backgroundColor: "#ffffff12", borderWidth: 1, borderColor: "#ffffff1f", borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 },
+  play: { width: 72, height: 72, borderRadius: 36, backgroundColor: theme.button, alignItems: "center", justifyContent: "center" },
+  extras: { flexDirection: "row", justifyContent: "center", flexWrap: "wrap", gap: 6, marginTop: 10 },
+  chip: { minHeight: 48, justifyContent: "center", backgroundColor: "#ffffff12", borderWidth: 1, borderColor: "#ffffff1f", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8 },
   chipRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   chipActive: { borderColor: theme.accent },
   chipDone: { borderColor: theme.good + "55" },
@@ -822,8 +825,8 @@ const styles = StyleSheet.create({
   stepTxt: { color: theme.text, fontSize: 26, fontWeight: "600", marginTop: -2 },
   speedBig: { color: theme.text, fontSize: 34, fontWeight: "800", minWidth: 110, textAlign: "center", fontVariant: ["tabular-nums"] },
   presetGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 4, marginTop: 6 },
-  preset: { backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 9 },
-  presetActive: { backgroundColor: theme.accent, borderColor: theme.accent },
+  preset: { minHeight: 48, justifyContent: "center", backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 9 },
+  presetActive: { backgroundColor: theme.button, borderColor: theme.accent },
   presetTxt: { color: theme.text, fontWeight: "600" },
   presetTxtActive: { color: "#fff" },
   sheetNote: { color: theme.dim, fontSize: 12, marginTop: 6, paddingHorizontal: 4 },

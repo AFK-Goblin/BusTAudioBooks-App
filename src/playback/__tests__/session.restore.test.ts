@@ -39,11 +39,49 @@ function harness(options: { queue?: NativeMediaItem[]; stored?: PlaybackSessionR
   }) };
 }
 
-test("initializes once when callers race", async () => {
+test("shares a concurrent initialization attempt and reuses it after success", async () => {
   const h = harness();
   await Promise.all([h.instance.initialize(), h.instance.initialize(), h.instance.initialize()]);
+  await h.instance.initialize();
   expect(h.player.setup).toHaveBeenCalledTimes(1);
   expect(h.player.configureCommands).toHaveBeenCalledTimes(1);
+});
+
+test("retries initialization after a transient player setup failure", async () => {
+  const h = harness();
+  (h.player.setup as jest.Mock)
+    .mockRejectedValueOnce(new Error("playback service unavailable"))
+    .mockResolvedValueOnce(undefined);
+
+  await expect(h.instance.initialize()).rejects.toThrow("playback service unavailable");
+  expect(h.instance.getSnapshot()).toMatchObject({
+    status: "error",
+    error: { code: "initialization-failed", message: "playback service unavailable", retryable: true },
+  });
+
+  await expect(h.instance.initialize()).resolves.toMatchObject({ status: "idle" });
+  expect(h.player.setup).toHaveBeenCalledTimes(2);
+  expect(h.player.configureCommands).toHaveBeenCalledTimes(1);
+  expect(h.instance.getSnapshot().error).toBeUndefined();
+});
+
+test("cleans up listeners from a later failed initialization before retrying", async () => {
+  const h = harness();
+  const active = new Map<PlaybackEvent, Set<(payload: any) => void>>();
+  (h.player.subscribe as jest.Mock).mockImplementation((event: PlaybackEvent, listener: (payload: any) => void) => {
+    if (!active.has(event)) active.set(event, new Set());
+    active.get(event)!.add(listener);
+    return () => active.get(event)?.delete(listener);
+  });
+  (h.player.getQueue as jest.Mock)
+    .mockRejectedValueOnce(new Error("queue temporarily unavailable"))
+    .mockResolvedValueOnce([]);
+
+  await expect(h.instance.initialize()).rejects.toThrow("queue temporarily unavailable");
+  expect([...active.values()].reduce((total, listeners) => total + listeners.size, 0)).toBe(0);
+
+  await expect(h.instance.initialize()).resolves.toMatchObject({ status: "idle" });
+  expect([...active.values()].map((listeners) => listeners.size)).toEqual([1, 1, 1, 1, 1, 1]);
 });
 
 test.each([[true, "playing"], [false, "paused"]] as const)("adopts a valid live queue with playing=%s as %s without replacing or seeking", async (playing, expected) => {

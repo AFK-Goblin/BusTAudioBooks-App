@@ -6,7 +6,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { getStreams } from "./api";
 import { checkSpace } from "./downloadPrompt";
-import { startDownload } from "./downloads";
+import { enqueueDownload } from "./downloads";
 import { getBook, upsertBook } from "./library";
 import { showToast } from "./toast";
 import { notify } from "./notify";
@@ -91,9 +91,13 @@ export function checkWaiting({ startDownloads = true, notifyReady = false } = {}
         w.status = "Ready, but your phone is short on space — open the book to download anyway.";
         continue;
       }
-      delete items[w.id];
-      startDownload({ id: w.id, title: w.title, author: w.author, poster: w.poster, format: w.format, files }, files);
-      showToast(`“${w.title}” is ready on TorBox — downloading it now`);
+      try {
+        await enqueueDownload({ id: w.id, title: w.title, author: w.author, poster: w.poster, format: w.format, files }, files);
+        delete items[w.id];
+        showToast(`“${w.title}” is ready on TorBox — download queued`);
+      } catch (err) {
+        w.status = err.message || "Couldn't start the download. Will try again.";
+      }
     }
     await save();
   })().finally(() => { checking = null; });

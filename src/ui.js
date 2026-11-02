@@ -1,6 +1,6 @@
 // src/ui.js — small shared UI pieces built on expo-linear-gradient.
 import React, { useEffect, useState } from "react";
-import { View, Text, Image, TouchableOpacity, StyleSheet, Modal, ScrollView, Animated } from "react-native";
+import { View, Text, Image, TouchableOpacity, StyleSheet, Modal, ScrollView, Animated, KeyboardAvoidingView, Platform, useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme } from "./theme";
@@ -47,17 +47,24 @@ export function SkeletonRows({ count = 6 }) {
 // Bottom sheet: tap outside or Android back to close.
 export function Sheet({ visible, onClose, title, children, maxHeight = 460 }) {
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
-        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom }]} onStartShouldSetResponder={() => true}>
+      <KeyboardAvoidingView style={styles.sheetBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} accessible={false} />
+        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, maxHeight: height - insets.top - 24 }]} accessibilityViewIsModal>
           <View style={styles.sheetHandle} />
-          {title ? <Text style={styles.sheetTitle}>{title}</Text> : null}
-          <ScrollView style={{ maxHeight }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <View style={styles.sheetHeading}>
+            {title ? <Text style={styles.sheetTitle} accessibilityRole="header">{title}</Text> : null}
+            <TouchableOpacity style={styles.sheetClose} onPress={onClose} accessibilityRole="button" accessibilityLabel={`Close ${title || "sheet"}`}>
+              <Text style={styles.actionLabel}>Done</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ maxHeight: Math.min(maxHeight, height - insets.top - insets.bottom - 120), flexShrink: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {children}
           </ScrollView>
         </View>
-      </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -141,7 +148,7 @@ export function Stars({ value = 0, onChange, size = 22 }) {
           <TouchableOpacity
             key={n}
             onPress={() => onChange(n === value ? 0 : n)}
-            hitSlop={{ top: 6, bottom: 6, left: 3, right: 3 }}
+            style={{ minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" }}
             accessibilityRole="button"
             accessibilityLabel={`${n} star${n === 1 ? "" : "s"}`}
             accessibilityState={{ selected: n <= value }}
@@ -162,8 +169,8 @@ export function starText(value) {
 // Primary gradient button.
 export function GradientButton({ title, onPress, disabled, style, textStyle, children }) {
   return (
-    <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.85} style={[styles.wrap, style]}>
-      <LinearGradient colors={theme.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.grad}>
+    <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.85} accessibilityRole="button" accessibilityState={{ disabled: !!disabled }} style={[styles.wrap, disabled && { opacity: 0.5 }, style]}>
+      <LinearGradient colors={theme.buttonGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.grad}>
         {children || <Text style={[styles.txt, textStyle]}>{title}</Text>}
       </LinearGradient>
     </TouchableOpacity>
@@ -214,11 +221,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.border, paddingHorizontal: 14, paddingTop: 10,
   },
   sheetHandle: { alignSelf: "center", width: 38, height: 4, borderRadius: 2, backgroundColor: theme.border, marginBottom: 10 },
-  sheetTitle: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginBottom: 6, marginLeft: 12 },
-  action: { paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },
+  sheetHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  sheetClose: { minWidth: 56, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  sheetTitle: { flex: 1, color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginLeft: 12 },
+  action: { minHeight: 48, justifyContent: "center", paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },
   actionLabel: { color: theme.text, fontSize: 16, fontWeight: "600" },
   actionHint: { color: theme.dim, fontSize: 12, marginTop: 2 },
   wrap: { borderRadius: 12, overflow: "hidden" },
-  grad: { paddingVertical: 15, alignItems: "center", justifyContent: "center" },
+  grad: { minHeight: 48, paddingVertical: 15, alignItems: "center", justifyContent: "center" },
   txt: { color: "#fff", fontWeight: "700", fontSize: 15 },
 });

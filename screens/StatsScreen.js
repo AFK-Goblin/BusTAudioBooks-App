@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   section: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginTop: 22, marginBottom: 8 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 7 },
-  chipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
+  chipActive: { backgroundColor: theme.button, borderColor: theme.accent },
   chipTxt: { color: theme.sub, fontWeight: "600", fontSize: 13 },
   chipTxtActive: { color: "#fff" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: theme.border },

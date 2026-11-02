@@ -219,6 +219,7 @@ test("a big library gets a filter, and downloads show their size", async () => {
 test("bookmarks take notes; a finished book offers to start again", async () => {
   await library.upsertBook({ id: "book", title: "The Adventures", files: m4b.files, bookmarks: [{ position: 4000, trackIndex: 0, createdAt: 7 }] });
   await render(<PlayerScreen nav={nav} />);
+  await fireEvent.press(await screen.findByLabelText("Open bookmarks"));
   expect(await screen.findByText(/1:06:40 · The Red-Headed League/)).toBeTruthy();
   await fireEvent.press(screen.getByLabelText("Edit note"));
   await fireEvent.changeText(screen.getByPlaceholderText("What's worth remembering here?"), "Jabez Wilson");
@@ -236,12 +237,13 @@ test("the end of a book says so", async () => {
   expect(player.skipToIndex).toHaveBeenCalledWith(0);
 });
 
-test("a Wi-Fi-only download that hasn't started explains why", async () => {
+test("a preparing download does not invent a Wi-Fi waiting state", async () => {
   await setSetting("wifiOnly", true);
   const store = require("../downloadStore");
   store.startTracking("w", { title: "Waiting Book", count: 1, files: [{ size: 100 }] });
   await render(<LibraryScreen nav={nav} />);
-  expect(await screen.findByText("Waiting for Wi-Fi (Wi-Fi only is on in Settings)")).toBeTruthy();
+  expect(await screen.findByText("Preparing download · Wi-Fi only enabled")).toBeTruthy();
+  expect(screen.queryByText(/Waiting for Wi-Fi/)).toBeNull();
   await act(async () => {
     store.dismissTracking("w");
     await setSetting("wifiOnly", false);
@@ -380,7 +382,8 @@ test("settings: back up via the share sheet, restore by pasting", async () => {
 test("a big jump in the player can be undone", async () => {
   await render(<PlayerScreen nav={nav} />);
   await screen.findAllByText("The Red-Headed League");
-  await fireEvent.press(screen.getAllByText("A Case of Identity")[0]);
+  await fireEvent.press(await screen.findByLabelText("Open chapters"));
+  await fireEvent.press(screen.getByText("A Case of Identity"));
   await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(8049));
   await fireEvent.press(await screen.findByText("↶ Back to 1:06:40"));
   expect(player.seekTo).toHaveBeenLastCalledWith(4000);
@@ -406,7 +409,7 @@ test("a book can be saved for later from its page", async () => {
 test("saved books wait in the Library and on Home", async () => {
   await library.setSaved({ id: "w1", title: "Saved One" }, true);
   await render(<LibraryScreen nav={nav} />);
-  expect(await screen.findByText("Want to Listen")).toBeTruthy();
+  expect((await screen.findAllByText("Want to Listen")).length).toBeGreaterThan(0);
   expect(screen.getByText("Saved today")).toBeTruthy();
   await fireEvent.press(screen.getByLabelText("More actions for Saved One"));
   await fireEvent.press(screen.getByText("Remove from Want to Listen"));
@@ -446,6 +449,7 @@ test("listening stats: today against a goal, recent days and finished books", as
 test("the chapter list shows each chapter's length", async () => {
   await render(<PlayerScreen nav={nav} />);
   await screen.findAllByText("The Red-Headed League");
+  await fireEvent.press(screen.getByLabelText("Open chapters"));
   // Chapters 1 and 3 are both about 66 minutes; chapter 2 is playing.
   expect(screen.getAllByText("1h 6m")).toHaveLength(2);
 });
@@ -657,9 +661,9 @@ test("long chapter lists can be searched", async () => {
   await render(<PlayerScreen nav={nav} />);
   await fireEvent.press((await screen.findAllByText("Chapter 11"))[0]); // the subtitle opens the sheet
   await fireEvent.changeText(await screen.findByPlaceholderText("Find a chapter"), "final");
-  // The sheet now lists only the match (the full list below the player stays).
-  expect(screen.getAllByText("The Final Problem")).toHaveLength(2);
-  expect(screen.getAllByText("Chapter 12")).toHaveLength(1);
+  // Long lists live only in the sheet; filtering removes non-matches.
+  expect(screen.getAllByText("The Final Problem")).toHaveLength(1);
+  expect(screen.queryByText("Chapter 12")).toBeNull();
 });
 
 test("a book page lists its contents to start from any chapter or part", async () => {
@@ -795,4 +799,73 @@ test("home suggests new books in your series and books like your last one", asyn
   await waitFor(() => expect(api.search).toHaveBeenCalledWith("The Primal Hunter", 1));
   api.getSeries.mockResolvedValue(null);
   api.getSimilar.mockResolvedValue(null);
+});
+
+test("the player exposes chapters and bookmarks without long lists under its controls", async () => {
+  await library.upsertBook({ ...m4b, bookmarks: [{ position: 20, trackIndex: 0, createdAt: 8, note: "Remember this" }] });
+  await render(<PlayerScreen nav={nav} />);
+  await screen.findByLabelText("Open chapters");
+  expect(screen.queryByText("A Scandal in Bohemia")).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Open chapters"));
+  expect(await screen.findByText("A Scandal in Bohemia")).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Close Chapters"));
+  await fireEvent.press(screen.getByLabelText("Open bookmarks"));
+  expect(await screen.findByText("Remember this")).toBeTruthy();
+  expect(screen.getByLabelText("Delete bookmark at 0:20")).toBeTruthy();
+});
+
+test("the seek control describes its scope and elapsed time to assistive technology", async () => {
+  await render(<PlayerScreen nav={nav} />);
+  expect(await screen.findByLabelText("Position in chapter")).toBeTruthy();
+  expect(screen.getByTestId("slider").props.accessibilityValue.text).toContain("0:17");
+  await fireEvent.press(screen.getByText("Whole book"));
+  expect(screen.getByLabelText("Position in book")).toBeTruthy();
+});
+
+test("library filters isolate offline and saved books without duplicate shelves", async () => {
+  await library.upsertBook({ id: "offline", title: "Offline Story", downloaded: true, files: [{ uri: "file:///x" }], progress: { position: 50, duration: 100 } });
+  await library.setSaved({ id: "saved", title: "For Later" }, true);
+  await render(<LibraryScreen nav={nav} />);
+  await fireEvent.press(await screen.findByLabelText("Library view: Downloaded"));
+  expect(screen.getAllByText("Offline Story")).toHaveLength(1);
+  expect(screen.queryByText("For Later")).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Library view: Want to Listen"));
+  expect(screen.getByText("For Later")).toBeTruthy();
+  expect(screen.queryByText("Offline Story")).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Library view: Transfers"));
+  expect(screen.getByText("No downloads in progress")).toBeTruthy();
+  await fireEvent.press(screen.getByText("Find a book"));
+  expect(nav.reset).toHaveBeenCalledWith("search");
+});
+
+test("connection testing reports an invalid key and can be retried", async () => {
+  api.health.mockResolvedValueOnce({ ok: true, torboxKeyValid: false }).mockResolvedValueOnce({ ok: true, torboxKeyValid: true });
+  await render(<SettingsScreen nav={nav} />);
+  await fireEvent.press(await screen.findByText("Test connection"));
+  expect(await screen.findByText("Server reached, but the TorBox key is invalid. Replace your install link.")).toBeTruthy();
+  await fireEvent.press(screen.getByText("Test connection"));
+  expect(await screen.findByText("Connected. Your server and TorBox key are ready.")).toBeTruthy();
+});
+
+test("the player exposes the current part title before opening the parts sheet", async () => {
+  chaptersService.embeddedChapters.mockResolvedValue(null);
+  const partTitle = "Chapter sixteen: The long road through the forgotten mountain kingdom";
+  mockSnapshot.current = { ...mockSnapshot.current, book: { ...m4b, files: [
+    { ...m4b.files[0], title: partTitle },
+    { filename: "next.mp3", title: "The next morning", url: "https://cdn/next", size: 1000 },
+  ] } };
+  await render(<PlayerScreen nav={nav} />);
+  expect(await screen.findByText(partTitle)).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Open chapters"));
+  expect(await screen.findByText("The next morning")).toBeTruthy();
+});
+
+test("Downloaded retains finished offline books and excludes finished streams", async () => {
+  await library.upsertBook({ id: "kept", title: "Kept Offline", downloaded: true, files: [{ uri: "file:///kept" }], progress: { finished: true, position: 100 } });
+  await library.upsertBook({ id: "stream", title: "Finished Stream", files: [{ url: "https://cdn/book" }], progress: { finished: true, position: 100 } });
+  await render(<LibraryScreen nav={nav} />);
+  await fireEvent.press(await screen.findByLabelText("Library view: Downloaded"));
+  expect(screen.getAllByText("Kept Offline")).toHaveLength(1);
+  expect(screen.queryByText("Finished Stream")).toBeNull();
+  expect(screen.queryByText("No offline books yet")).toBeNull();
 });

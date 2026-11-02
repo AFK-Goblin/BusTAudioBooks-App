@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, StyleSheet, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme } from "../src/theme";
 import { parseInstallLink, savePrefix } from "../src/config";
 import { health } from "../src/api";
@@ -9,6 +10,7 @@ export default function SetupScreen({ nav }) {
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const insets = useSafeAreaInsets();
 
   async function connect() {
     setError(null);
@@ -38,9 +40,15 @@ export default function SetupScreen({ nav }) {
   }
 
   return (
-    <View style={styles.wrap}>
+    <KeyboardAvoidingView style={styles.wrap} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]} keyboardShouldPersistTaps="handled">
       <Text style={styles.h1}>BusTAudio</Text>
-      <Text style={styles.sub}>Paste your BusTAudio install link to get started.</Text>
+      <Text style={styles.sub}>Your books, ready wherever you listen.</Text>
+      <View style={styles.steps}>
+        <Text style={styles.step}>1. Open your BusTAudio server’s setup page.</Text>
+        <Text style={styles.step}>2. Copy the install link, then paste it below.</Text>
+        <Text style={styles.step}>3. Connect, find a book, and stream or download it.</Text>
+      </View>
 
       <TextInput
         style={styles.input}
@@ -51,22 +59,28 @@ export default function SetupScreen({ nav }) {
         value={link}
         onChangeText={setLink}
         multiline
+        accessibilityLabel="BusTAudio install link"
+        editable={!busy}
       />
       <Text style={styles.hint}>
-        This is the same link you’d install in Stremio — get it from the server’s /configure page.
+        The setup page ends in /configure. If someone else runs your server, ask them for your install link. Your connection is checked before it is saved.
       </Text>
 
-      {error ? <Text style={styles.err}>{error}</Text> : null}
+      {error ? <Text style={styles.err} accessibilityLiveRegion="polite">{error}</Text> : null}
 
       <GradientButton onPress={connect} disabled={busy} style={{ marginTop: 22 }}>
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnTxt}>Connect</Text>}
       </GradientButton>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: theme.bg, padding: 24, justifyContent: "center" },
+  wrap: { flex: 1, backgroundColor: theme.bg },
+  content: { flexGrow: 1, paddingHorizontal: 24, justifyContent: "center" },
+  steps: { gap: 12, marginBottom: 24, padding: 16, backgroundColor: theme.card, borderRadius: 12 },
+  step: { color: theme.text, lineHeight: 22 },
   h1: { color: theme.text, fontSize: 30, fontWeight: "800", marginBottom: 4 },
   sub: { color: theme.sub, marginBottom: 24 },
   input: {

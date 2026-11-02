@@ -257,7 +257,7 @@ export default function BookScreen({ nav, params }) {
           {item.cached ? <Text style={[styles.tag, styles.tagAccent]}>⚡ Instant</Text> : null}
           {prog.finished ? <Text style={[styles.tag, styles.tagGood]}>✓ Finished</Text> : null}
           {listened >= 60 ? <Text style={styles.tag}>{formatDuration(listened)} listened</Text> : null}
-          {[item.format, item.bitrate, item.sizeText, details && details.genre, details && details.year]
+          {[details && details.genre, details && details.year]
             .filter(Boolean)
             .map((value) => <Text key={String(value)} style={styles.tag}>{value}</Text>)}
         </View>
@@ -343,7 +343,7 @@ export default function BookScreen({ nav, params }) {
           ) : activeDl && activeDl.status !== "error" ? (
             <View>
               <View style={styles.btnAlt}>
-                <Text style={[styles.btnTxt, { color: theme.text }]}>Downloading… {activeDl.pct}%</Text>
+                <Text style={[styles.btnTxt, { color: theme.text }]}>{activeDl.status === "preparing" ? "Preparing download…" : `Downloading… ${activeDl.pct}%`}</Text>
               </View>
               <TouchableOpacity style={styles.link} onPress={() => cancelDownload(item.id).catch(() => {})}>
                 <Text style={[styles.linkTxt, { color: theme.dim }]}>Cancel download</Text>
@@ -360,6 +360,27 @@ export default function BookScreen({ nav, params }) {
           {!local && <Text style={styles.hint}>Downloads keep going in the background — watch progress in your Library.</Text>}
         </View>
       )}
+
+      {details && details.description ? (
+        <View style={styles.about}>
+          <Text style={styles.aboutHead}>About this book</Text>
+          <Text style={styles.aboutTxt} numberOfLines={expanded ? undefined : 6}>{details.description}</Text>
+          {details.description.length > 280 && (
+            <TouchableOpacity onPress={() => setExpanded((v) => !v)} style={styles.moreBtn}>
+              <Text style={styles.linkTxt}>{expanded ? "Show less" : "Show more"}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : null}
+
+      {[item.format, item.bitrate, item.sizeText].some(Boolean) ? (
+        <View style={styles.about}>
+          <Text style={styles.aboutHead}>Edition details</Text>
+          <View style={[styles.tags, { justifyContent: "flex-start", marginTop: 0 }]}>
+            {[item.format, item.bitrate, item.sizeText].filter(Boolean).map((value, index) => <Text key={`${index}:${value}`} style={styles.tag}>{value}</Text>)}
+          </View>
+        </View>
+      ) : null}
 
       {contents.length > 0 ? (
         <View style={styles.about}>
@@ -415,17 +436,7 @@ export default function BookScreen({ nav, params }) {
         </View>
       ) : null}
 
-      {details && details.description ? (
-        <View style={styles.about}>
-          <Text style={styles.aboutHead}>About this book</Text>
-          <Text style={styles.aboutTxt} numberOfLines={expanded ? undefined : 6}>{details.description}</Text>
-          {details.description.length > 280 && (
-            <TouchableOpacity onPress={() => setExpanded((v) => !v)} style={styles.moreBtn}>
-              <Text style={styles.linkTxt}>{expanded ? "Show less" : "Show more"}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      ) : null}
+
     </ScrollView>
   );
 }
@@ -447,8 +458,8 @@ const styles = StyleSheet.create({
   },
   tagAccent: { color: "#fff", backgroundColor: theme.accent2, borderColor: theme.accent },
   tagGood: { color: theme.good, borderColor: theme.good + "55" },
-  saveBtn: { marginTop: 14, borderRadius: 16, borderWidth: 1, borderColor: theme.accent, paddingHorizontal: 14, paddingVertical: 6 },
-  saveBtnOn: { backgroundColor: theme.accent },
+  saveBtn: { minHeight: 48, justifyContent: "center", marginTop: 14, borderRadius: 16, borderWidth: 1, borderColor: theme.accent, paddingHorizontal: 14, paddingVertical: 6 },
+  saveBtnOn: { backgroundColor: theme.button },
   saveTxt: { color: theme.accent, fontWeight: "700", fontSize: 13 },
   saveTxtOn: { color: "#fff" },
   author: { color: theme.sub, marginTop: 4, textAlign: "center" },
@@ -464,14 +475,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: "center", marginTop: 12,
   },
   btnTxt: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  retry: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 8, backgroundColor: theme.accent, borderRadius: 8 },
+  retry: { minHeight: 48, justifyContent: "center", marginTop: 10, paddingHorizontal: 18, paddingVertical: 8, backgroundColor: theme.button, borderRadius: 8 },
   retryTxt: { color: "#fff", fontWeight: "600" },
   hint: { color: theme.dim, fontSize: 12, textAlign: "center", marginTop: 10 },
   link: { alignSelf: "center", paddingVertical: 8, paddingHorizontal: 12, marginTop: 2 },
   about: { marginTop: 28 },
   aboutHead: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginBottom: 8 },
   aboutTxt: { color: theme.text, lineHeight: 21 },
-  moreBtn: { paddingVertical: 8 },
+  moreBtn: { minHeight: 48, justifyContent: "center", paddingVertical: 8 },
   seriesCard: { width: 96 },
   seriesCover: { borderRadius: 10, borderWidth: 2, borderColor: "transparent", alignSelf: "flex-start" },
   seriesCurrent: { borderColor: theme.accent },

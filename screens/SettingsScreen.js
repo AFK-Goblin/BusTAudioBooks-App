@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Linking, ScrollView, Switch, Share } from "react-native";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { theme, ACCENTS, appliedAccent, storedAccent, saveAccent } from "../src/theme";
 import { getPrefix, clearPrefix } from "../src/config";
-import { appVersion } from "../src/api";
+import { appVersion, health } from "../src/api";
 import { cmpVersion } from "../src/version";
 import { formatBytes, formatSpeed } from "../src/format";
 import {
@@ -27,6 +27,10 @@ export default function SettingsScreen({ nav }) {
   const topPad = useScreenPad();
   const [server, setServer] = useState("");
   const [checking, setChecking] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState(null);
+  const scroll = useRef(null);
+  const sectionOffsets = useRef({});
   const [status, setStatus] = useState(null);
   const [usage, setUsage] = useState(null); // bytes, or null while loading
   const [restoring, setRestoring] = useState(false);
@@ -44,7 +48,7 @@ export default function SettingsScreen({ nav }) {
           const u = new URL(p);
           setServer(u.host);
         } catch (_) {
-          setServer(p);
+          setServer("Saved connection");
         }
       }
     })();
@@ -102,6 +106,23 @@ export default function SettingsScreen({ nav }) {
         },
       ]
     );
+  }
+
+  async function testConnection() {
+    setTestingConnection(true);
+    setConnectionStatus(null);
+    try {
+      const result = await health();
+      setConnectionStatus(result && result.torboxKeyValid === false
+        ? "Server reached, but the TorBox key is invalid. Replace your install link."
+        : result && result.torboxKeyValid === true
+          ? "Connected. Your server and TorBox key are ready."
+          : "Server connected. This server does not report TorBox key status.");
+    } catch (_) {
+      setConnectionStatus("Could not connect. Check your connection and install link, then try again. Downloaded books still work offline.");
+    } finally {
+      setTestingConnection(false);
+    }
   }
 
   async function checkUpdates() {
@@ -177,9 +198,16 @@ export default function SettingsScreen({ nav }) {
   return (
     <View style={[styles.wrap, { paddingTop: topPad }]}>
       <Text style={styles.brand}>Settings</Text>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionNav} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
+        {["Playback", "Appearance", "Listening", "Notifications", "Downloads", "Backup", "Connection", "About"].map((section) => (
+          <TouchableOpacity key={section} style={styles.sectionLink} accessibilityRole="button" accessibilityLabel={`Settings section: ${section}`} onPress={() => scroll.current?.scrollTo({ y: Math.max(0, (sectionOffsets.current[section] || 0) - 8), animated: true })}>
+            <Text style={styles.sectionLinkText}>{section}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <ScrollView ref={scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90 }}>
 
-        <Text style={styles.sectionHead}>Playback</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Playback"] = event.nativeEvent.layout.y; }}>Playback</Text>
         <View style={styles.card}>
           <Text style={styles.label}>Default speed</Text>
           <Text style={styles.labelSub}>For books you haven’t started — each book remembers its own speed.</Text>
@@ -255,7 +283,7 @@ export default function SettingsScreen({ nav }) {
           ) : null}
         </View>
 
-        <Text style={styles.sectionHead}>Appearance</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Appearance"] = event.nativeEvent.layout.y; }}>Appearance</Text>
         <View style={styles.card}>
           <Text style={styles.label}>Accent colour</Text>
           <View style={styles.swatches}>
@@ -286,7 +314,7 @@ export default function SettingsScreen({ nav }) {
           ) : null}
         </View>
 
-        <Text style={styles.sectionHead}>Listening</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Listening"] = event.nativeEvent.layout.y; }}>Listening</Text>
         <View style={styles.card}>
           <Text style={styles.label}>Daily goal</Text>
           <Text style={styles.labelSub}>Minutes a day to aim for — tracked in your listening stats and Library.</Text>
@@ -302,7 +330,7 @@ export default function SettingsScreen({ nav }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionHead}>Notifications</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Notifications"] = event.nativeEvent.layout.y; }}>Notifications</Text>
         <View style={styles.card}>
           <SwitchRow
             label="Ready on TorBox"
@@ -319,7 +347,7 @@ export default function SettingsScreen({ nav }) {
           />
         </View>
 
-        <Text style={styles.sectionHead}>Downloads</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Downloads"] = event.nativeEvent.layout.y; }}>Downloads</Text>
         <View style={styles.card}>
           <SwitchRow
             label="Wi-Fi only"
@@ -350,7 +378,7 @@ export default function SettingsScreen({ nav }) {
           )}
         </View>
 
-        <Text style={styles.sectionHead}>Backup</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Backup"] = event.nativeEvent.layout.y; }}>Backup</Text>
         <View style={styles.card}>
           <Text style={styles.cardNote}>
             Your progress, bookmarks and stats live only on this phone. Save a backup to Drive, email or notes,
@@ -366,16 +394,21 @@ export default function SettingsScreen({ nav }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionHead}>Server</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Connection"] = event.nativeEvent.layout.y; }}>Connection</Text>
         <View style={styles.card}>
           <Row label="Connected to" value={server || "—"} />
+          <Divider />
+          <TouchableOpacity style={styles.inlineBtn} onPress={testConnection} disabled={testingConnection} accessibilityRole="button" accessibilityState={{ busy: testingConnection, disabled: testingConnection }}>
+            {testingConnection ? <ActivityIndicator color={theme.accent} /> : <Text style={[styles.inlineBtnTxt, { color: theme.accent }]}>Test connection</Text>}
+          </TouchableOpacity>
+          {connectionStatus ? <Text style={styles.cardNote} accessibilityLiveRegion="polite">{connectionStatus}</Text> : null}
           <Divider />
           <TouchableOpacity style={styles.inlineBtn} onPress={changeServer}>
             <Text style={styles.inlineBtnTxt}>Change server / disconnect</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionHead}>About</Text>
+        <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["About"] = event.nativeEvent.layout.y; }}>About</Text>
         <View style={styles.card}>
           <Row label="App version" value={version} />
           <Divider />
@@ -499,6 +532,9 @@ function Divider() {
 }
 
 const styles = StyleSheet.create({
+  sectionNav: { flexGrow: 0 },
+  sectionLink: { minHeight: 48, paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card, justifyContent: "center" },
+  sectionLinkText: { color: theme.sub, fontWeight: "600" },
   wrap: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 16 },
   brand: { color: theme.text, fontSize: 22, fontWeight: "800", marginBottom: 6 },
   sectionHead: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginTop: 18, marginBottom: 8 },
@@ -517,10 +553,10 @@ const styles = StyleSheet.create({
   labelSub: { color: theme.dim, fontSize: 12, marginTop: 2 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingVertical: 12 },
   chip: { backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 7 },
-  chipActive: { backgroundColor: theme.accent, borderColor: theme.accent },
+  chipActive: { backgroundColor: theme.button, borderColor: theme.accent },
   chipTxt: { color: theme.sub, fontWeight: "600", fontSize: 13 },
   chipTxtActive: { color: "#fff" },
-  inlineBtn: { paddingVertical: 13, alignItems: "flex-start" },
+  inlineBtn: { minHeight: 48, paddingVertical: 13, alignItems: "flex-start" },
   inlineBtnTxt: { color: theme.warn, fontWeight: "600" },
   cardNote: { color: theme.dim, fontSize: 12, lineHeight: 17, paddingVertical: 12 },
   sheetNote: { color: theme.dim, fontSize: 12, marginBottom: 10, paddingHorizontal: 4 },
@@ -528,7 +564,7 @@ const styles = StyleSheet.create({
     color: theme.text, backgroundColor: theme.bg, borderWidth: 1, borderColor: theme.border, borderRadius: 10,
     padding: 12, height: 140, textAlignVertical: "top", fontSize: 12, marginHorizontal: 4,
   },
-  restoreBtn: { backgroundColor: theme.accent, borderRadius: 10, paddingVertical: 12, alignItems: "center", marginTop: 12, marginHorizontal: 4 },
+  restoreBtn: { backgroundColor: theme.button, borderRadius: 10, paddingVertical: 12, alignItems: "center", marginTop: 12, marginHorizontal: 4 },
   restoreBtnTxt: { color: "#fff", fontWeight: "700" },
   status: { color: theme.dim, textAlign: "center", marginTop: 12 },
   dlRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.border },

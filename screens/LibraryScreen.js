@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SectionList, Alert, useWindowDimensions } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SectionList, ScrollView, Alert, useWindowDimensions } from "react-native";
 import { theme } from "../src/theme";
 import {
   librarySections, getLibrary, removeBook,
@@ -26,6 +26,7 @@ export default function LibraryScreen({ nav }) {
   const [menuFor, setMenuFor] = useState(null); // the entry whose actions are open
   const [rateFor, setRateFor] = useState(null); // the entry being rated
   const [filter, setFilter] = useState("");
+  const [libraryView, setLibraryView] = useState("all");
   const settings = useSettings();
   const stats = useListeningStats();
   const downloads = useDownloads();
@@ -56,11 +57,22 @@ export default function LibraryScreen({ nav }) {
   const total = sections.reduce((n, section) => n + section.data.length, 0);
   const needle = filter.trim().toLowerCase();
   const sort = SORTS.find((s) => s.key === settings.librarySort) || SORTS[0];
-  const sorted = sort.compare ? sections.map((section) => ({ ...section, data: [...section.data].sort(sort.compare) })) : sections;
+  // The All view separates finished books, but offline availability spans both shelves.
+  const offlineBooks = sections.filter((section) => section.kind === "download" || section.kind === "finished")
+    .flatMap((section) => section.data).filter((book) => book.downloaded)
+    .sort((a, b) => (b.downloadedAt || 0) - (a.downloadedAt || 0));
+  const selectedSections = libraryView === "downloaded" ? [{ title: "Downloads", kind: "download", data: offlineBooks }]
+    : libraryView === "saved" ? sections.filter((section) => section.kind === "saved")
+      : libraryView === "transfers" ? [] : sections;
+  const matches = (book) => !needle || `${book.title || ""} ${book.author || ""}`.toLowerCase().includes(needle);
+  const showTransfers = libraryView === "all" || libraryView === "transfers";
+  const visibleWaiting = showTransfers ? waiting.filter(matches) : [];
+  const visibleDownloads = showTransfers ? downloads.filter(matches) : [];
+  const sorted = sort.compare ? selectedSections.map((section) => ({ ...section, data: [...section.data].sort(sort.compare) })) : selectedSections;
   // Folded sections keep their header (with a count) so they can be opened
   // again; a filter shows matches everywhere.
   const collapsed = Array.isArray(settings.libraryCollapsed) ? settings.libraryCollapsed : [];
-  const shown = needle
+  const shown = needle || libraryView !== "all"
     ? sorted
       .map((section) => ({
         ...section,
@@ -212,7 +224,14 @@ export default function LibraryScreen({ nav }) {
           </Text>
         </TouchableOpacity>
       ) : null}
-      {total >= FILTER_THRESHOLD || needle ? (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.views} contentContainerStyle={styles.viewOptions}>
+        {[["all", "All"], ["downloaded", "Downloaded"], ["saved", "Want to Listen"], ["transfers", "Transfers"]].map(([key, label]) => (
+          <TouchableOpacity key={key} style={[styles.viewChip, libraryView === key && styles.viewChipActive]} onPress={() => setLibraryView(key)} accessibilityRole="button" accessibilityState={{ selected: libraryView === key }} accessibilityLabel={`Library view: ${label}`}>
+            <Text style={[styles.viewText, libraryView === key && { color: theme.text }]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      {total >= FILTER_THRESHOLD || needle || libraryView === "transfers" ? (
         <View style={styles.filterWrap}>
           <SearchIcon size={16} color={theme.dim} />
           <TextInput
@@ -238,10 +257,10 @@ export default function LibraryScreen({ nav }) {
         keyExtractor={(it) => it.id}
         contentContainerStyle={{ paddingBottom: 90 }}
         ListHeaderComponent={
-          waiting.length > 0 || downloads.length > 0 ? (
+          visibleWaiting.length > 0 || visibleDownloads.length > 0 ? (
             <View>
-              {waiting.length > 0 ? <Text style={styles.section}>Waiting on TorBox</Text> : null}
-              {waiting.map((w) => (
+              {visibleWaiting.length > 0 ? <Text style={styles.section}>Waiting on TorBox</Text> : null}
+              {visibleWaiting.map((w) => (
                 <TouchableOpacity key={w.id} style={styles.dlRow} onPress={() => nav.navigate("book", { item: w })}>
                   <CoverArt uri={w.poster} size={52} radius={6} />
                   <View style={{ flex: 1 }}>
@@ -259,15 +278,15 @@ export default function LibraryScreen({ nav }) {
                   </TouchableOpacity>
                 </TouchableOpacity>
               ))}
-              {downloads.length > 0 ? <Text style={styles.section}>Downloading</Text> : null}
-              {downloads.map((d) => (
+              {visibleDownloads.length > 0 ? <Text style={styles.section}>Transfers</Text> : null}
+              {visibleDownloads.map((d) => (
                 <View key={d.id} style={styles.dlRow}>
                   <CoverArt uri={d.poster} size={52} radius={6} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.title} numberOfLines={2}>{d.title}</Text>
                     {d.status === "error" ? (
                       <View>
-                        <Text style={styles.dlErr} numberOfLines={1}>Failed — {d.error || "download error"}</Text>
+                        <Text style={styles.dlErr}>Failed — {d.error || "download error"}</Text>
                         <View style={styles.errBtns}>
                           <TouchableOpacity style={styles.errBtn} onPress={() => retryDownload(d)}>
                             <Text style={styles.errBtnTxt}>Retry</Text>
@@ -277,6 +296,8 @@ export default function LibraryScreen({ nav }) {
                           </TouchableOpacity>
                         </View>
                       </View>
+                    ) : d.status === "preparing" ? (
+                      <Text style={styles.meta}>Preparing download{settings.wifiOnly ? " · Wi-Fi only enabled" : ""}</Text>
                     ) : (
                       <>
                         <Text style={styles.meta}>
@@ -284,9 +305,6 @@ export default function LibraryScreen({ nav }) {
                           {d.bytesTotal ? ` · ${formatBytes(d.bytesDone)} of ${formatBytes(d.bytesTotal)}` : ""}
                           {d.count > 1 ? ` · file ${d.i + 1}/${d.count}` : ""}
                         </Text>
-                        {settings.wifiOnly && d.pct === 0 && !d.bytesDone ? (
-                          <Text style={styles.meta}>Waiting for Wi-Fi (Wi-Fi only is on in Settings)</Text>
-                        ) : null}
                         <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${d.pct}%` }]} /></View>
                       </>
                     )}
@@ -312,7 +330,7 @@ export default function LibraryScreen({ nav }) {
             <TouchableOpacity
               style={styles.sectionBtn}
               onPress={() => toggleSection(section.kind)}
-              disabled={!!needle}
+              disabled={!!needle || libraryView !== "all"}
               accessibilityRole="button"
               accessibilityState={{ expanded: !folded }}
               accessibilityLabel={`${section.title}${folded ? `, ${section.count} hidden` : ""}`}
@@ -327,10 +345,12 @@ export default function LibraryScreen({ nav }) {
             <View style={styles.emptyBox}>
               <Text style={styles.empty}>Nothing in your library matches “{filter.trim()}”.</Text>
             </View>
-          ) : downloads.length === 0 && waiting.length === 0 ? (
+          ) : visibleDownloads.length === 0 && visibleWaiting.length === 0 ? (
             <View style={styles.emptyBox}>
               <NoteGlyph size={38} color={theme.border} />
-              <Text style={styles.empty}>Nothing here yet.{"\n"}Search for a book, then play it or download it for offline.</Text>
+              <Text style={styles.empty}>{libraryView === "transfers" ? "No downloads in progress" : libraryView === "downloaded" ? "No offline books yet" : libraryView === "saved" ? "Your next listen starts here" : "Nothing here yet."}</Text>
+              <Text style={styles.empty}>{libraryView === "saved" ? "Save a book to Want to Listen to find it here." : "Find a book to stream or download for offline listening."}</Text>
+              <TouchableOpacity style={styles.emptyAction} onPress={() => nav.reset("search")} accessibilityRole="button"><Text style={styles.errBtnTxt}>Find a book</Text></TouchableOpacity>
             </View>
           ) : null
         }
@@ -482,8 +502,14 @@ function sizeOf(item) {
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 16 },
   brand: { color: theme.text, fontSize: 22, fontWeight: "800", marginBottom: 10 },
-  headRow: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" },
-  sortBtn: { paddingVertical: 4, paddingHorizontal: 6 },
+  headRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between" },
+  views: { flexGrow: 0, marginBottom: 8 },
+  viewOptions: { gap: 8, paddingVertical: 2 },
+  viewChip: { minHeight: 48, justifyContent: "center", paddingHorizontal: 14, borderRadius: 24, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border },
+  viewChipActive: { borderColor: theme.accent, backgroundColor: theme.accent2 },
+  viewText: { color: theme.sub, fontWeight: "600" },
+  emptyAction: { minHeight: 48, justifyContent: "center", paddingHorizontal: 18, borderRadius: 12, backgroundColor: theme.button },
+  sortBtn: { minHeight: 48, justifyContent: "center", paddingVertical: 4, paddingHorizontal: 6 },
   sortTxt: { color: theme.accent, fontWeight: "600", fontSize: 13 },
   statsLine: { color: theme.dim, fontSize: 12, marginTop: -6, marginBottom: 8 },
   statsMore: { color: theme.accent, fontWeight: "700" },
@@ -493,7 +519,7 @@ const styles = StyleSheet.create({
   },
   filterInput: { flex: 1, color: theme.text, height: 40 },
   section: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase", marginTop: 18, marginBottom: 6 },
-  sectionBtn: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 18, marginBottom: 6, backgroundColor: theme.bg },
+  sectionBtn: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 6, marginTop: 18, marginBottom: 6, backgroundColor: theme.bg },
   sectionTxt: { color: theme.sub, fontWeight: "700", fontSize: 13, textTransform: "uppercase" },
   headActions: { flexDirection: "row", alignItems: "baseline", gap: 4 },
   row: { flexDirection: "row", gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border, alignItems: "center" },
@@ -511,13 +537,13 @@ const styles = StyleSheet.create({
   },
   dlErr: { color: "#f87171", fontSize: 12, marginTop: 3 },
   errBtns: { flexDirection: "row", gap: 8, marginTop: 8 },
-  errBtn: { backgroundColor: theme.accent, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 5 },
+  errBtn: { minHeight: 48, justifyContent: "center", backgroundColor: theme.button, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 5 },
   errBtnAlt: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.border },
   errBtnTxt: { color: "#fff", fontWeight: "600", fontSize: 12 },
   title: { color: theme.text, fontWeight: "600" },
   author: { color: theme.sub, fontSize: 13, marginTop: 1 },
   meta: { color: theme.dim, fontSize: 12, marginTop: 3 },
-  moreBtn: { padding: 6 },
+  moreBtn: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center", padding: 6 },
   emptyBox: { alignItems: "center", marginTop: 60, gap: 10, paddingHorizontal: 30 },
   rateBox: { alignItems: "center", paddingVertical: 14, gap: 10 },
   rateHint: { color: theme.dim, fontSize: 12 },

@@ -1,0 +1,27 @@
+const fs=require('fs'),os=require('os'),path=require('path'),assert=require('assert/strict');
+const backend=process.env.BUSTAUDIO_SERVER_ROOT;
+if(!backend)throw Error('Set BUSTAUDIO_SERVER_ROOT to the accounts backend checkout.');
+const client=path.resolve(__dirname,'../..');
+const express=require(backend+'/node_modules/express');
+const {createAccounts}=require(backend+'/src/accounts');
+const {LibrarySession}=require(client+'/desktop/core.cjs');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bustaudio-contract-'));
+const service=createAccounts({dbPath:path.join(dir,'accounts.sqlite')});
+const app=express();app.use('/config/app/accounts',service.router);
+const server=app.listen(0,'127.0.0.1');
+(async()=>{
+ await new Promise(r=>server.once('listening',r));const prefix='http://127.0.0.1:'+server.address().port+'/config';
+ const data=s=>'data:text/javascript;base64,'+Buffer.from(s).toString('base64');
+ const projection=data(fs.readFileSync(client+'/src/accounts/projection.js','utf8'));
+ const bridgeSource=fs.readFileSync(client+'/src/accounts/bridge.js','utf8').replace("'./projection'",JSON.stringify(projection));
+ const {createAccountBridge}=await import(data(bridgeSource));
+ const store=new Map(),secure=new Map();let books={b:{id:'b',title:'Contract audiobook',saved:true,progress:{position:12,duration:90,trackIndex:2,trackDurations:[30,null,90]},bookmarks:[{createdAt:1,position:12,trackIndex:2,note:'Keep me'}],downloaded:true,files:[{uri:'file:///private'}]}};
+ const bridge=createAccountBridge({storage:{getItem:async k=>store.get(k),setItem:async(k,v)=>store.set(k,v)},secure:{getItemAsync:async k=>secure.get(k),setItemAsync:async(k,v)=>secure.set(k,v),deleteItemAsync:async k=>secure.delete(k)},getPrefix:async()=>prefix,getLibrary:async()=>structuredClone(books),closePlayback:async()=>{},fetch,applyRemote:async(id,record,_old,guard)=>{await guard();books[id]={...(books[id]||{}),...record.book};return {applied:true,local:books[id]};}});
+ await bridge.authenticate('register',{username:'alice',password:'a sufficiently long password',invite:service.invite('alice').invite});await bridge.linkPhone();await bridge.sync();
+ const login=await fetch(prefix+'/app/accounts/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'alice',password:'a sufficiently long password'})}).then(r=>r.json());
+ const desktop=new LibrarySession({persist:()=>{},request:async(route,opt={})=>{const res=await fetch(prefix+route,{method:opt.method||'GET',headers:{'Content-Type':'application/json',Authorization:'Bearer '+login.token},body:opt.body?JSON.stringify(opt.body):undefined});const out=await res.json();if(!res.ok)throw Object.assign(Error(out.error),{status:res.status,record:out.record});return out;}});
+ desktop.bind(login.user);await desktop.refresh();const book=desktop.snapshot().books[0];assert.deepEqual(book.progress.trackDurations,[30,null,90]);assert.equal(book.files,undefined);assert.equal(book.downloaded,undefined);
+ await desktop.save({...book,progress:{...book.progress,position:42}});await bridge.sync();assert.equal(books.b.progress.position,42);assert.equal(books.b.files[0].uri,'file:///private');assert.equal(books.b.bookmarks[0].note,'Keep me');
+ console.log('PASS: real SQLite HTTP round trip phone → desktop → phone; revision writes, nullable durations, bookmarks and local download preservation.');
+ await bridge.signOut();
+})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>server.close(()=>{service.close();fs.rmSync(dir,{recursive:true,force:true});}));

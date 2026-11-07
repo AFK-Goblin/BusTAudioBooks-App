@@ -1,4 +1,4 @@
-# BusTAudio — Android app
+# BusTAudio — Android and Windows
 
 An Expo/React Native audiobook app for the [BusTAudio backend](#related-projects): search,
 **stream**, **offline download**, background playback with lock-screen controls,
@@ -6,6 +6,22 @@ chapters, bookmarks, a sleep timer, and **Continue Listening** with saved progre
 
 It talks to your server's `/app` API. Users configure it once by pasting their
 BusTAudio install link (the same link they'd use in Stremio).
+
+## Windows and private libraries
+
+The [Windows desktop app](desktop/README.md) uses the same catalogue with separate,
+invite-only accounts. It includes streaming playback, personal saved books,
+bookmarks, progress, backup import and explicit conflict recovery.
+
+Personal accounts require backend **3.3.0** with persistent SQLite storage. On
+Android, open **Settings → Personal library**, sign in, and deliberately link your
+existing phone library. Choose **Sync now** before switching devices. Downloads
+stay local. A phone library remains bound to its original account; signing out
+does not erase its offline books. Windows clears its account cache at sign-out.
+
+The initial Windows bundle is unsigned and needs a native Windows check. See the
+desktop README for build and setup instructions. Deploy the account service before
+publishing the Android account-screen update.
 
 ## Features
 

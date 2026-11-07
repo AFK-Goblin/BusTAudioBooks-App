@@ -1,5 +1,6 @@
 // src/library.js — local library (downloaded + in-progress books) and progress.
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ACCOUNT_FIELDS, projectBook, sameBook, isAccountId } from "./accounts/projection";
 
 const LKEY = "bustaudio_library";
 
@@ -390,5 +391,26 @@ export function removeBookmark(id, createdAt) {
     lib[id].bookmarks = (lib[id].bookmarks || []).filter((b) => b.createdAt !== createdAt);
     await setLibrary(lib);
     return lib[id].bookmarks;
+  });
+}
+
+// Recheck local state inside the existing write queue before applying cloud data.
+export function applyAccountBook(id, record, expected, assertCurrent) {
+  return locked(async () => {
+    if (!isAccountId(id)) throw new Error("Invalid cloud book id.");
+    await assertCurrent();
+    const lib = await getLibrary();
+    const current = Object.prototype.hasOwnProperty.call(lib, id) ? lib[id] : null;
+    if (!sameBook(current, expected)) return { applied: false, local: projectBook(current) };
+    if (record.deleted) {
+      if (!current?.downloaded && !current?.files?.some(file => String(file.uri || file.url || "").startsWith("file:"))) delete lib[id];
+    } else {
+      const next = { ...(current || { files: [] }) };
+      for (const key of ACCOUNT_FIELDS) delete next[key];
+      lib[id] = { ...next, ...projectBook(record.book), id };
+    }
+    await assertCurrent();
+    await setLibrary(lib);
+    return { applied: true, local: projectBook(lib[id]) };
   });
 }

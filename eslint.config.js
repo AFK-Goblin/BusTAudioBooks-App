@@ -4,7 +4,7 @@ const { defineConfig } = require("eslint/config");
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ["dist/**", "dist-check/**", ".tmp-export-*/**", ".worktrees/**"],
+    ignores: ["dist/**", "dist-check/**", ".tmp-export-*/**", ".worktrees/**", "desktop/**"],
   },
   {
     files: ["**/*.js", "**/*.jsx"],

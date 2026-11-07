@@ -4,6 +4,7 @@ import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { theme, ACCENTS, appliedAccent, storedAccent, saveAccent } from "../src/theme";
 import { getPrefix, clearPrefix } from "../src/config";
+import { accountBridge } from "../src/account";
 import { appVersion, health } from "../src/api";
 import { cmpVersion } from "../src/version";
 import { formatBytes, formatSpeed } from "../src/format";
@@ -190,7 +191,7 @@ export default function SettingsScreen({ nav }) {
       { text: "Cancel", style: "cancel" },
       {
         text: "Disconnect", style: "destructive",
-        onPress: async () => { await clearPrefix(); nav.reset("setup"); },
+        onPress: async () => { await accountBridge.signOut(); await clearPrefix(); nav.reset("setup"); },
       },
     ]);
   }
@@ -206,6 +207,8 @@ export default function SettingsScreen({ nav }) {
         ))}
       </ScrollView>
       <ScrollView ref={scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90 }}>
+
+        <TouchableOpacity style={[styles.card, { minHeight: 64 }]} accessibilityRole="button" onPress={() => nav.navigate("account")}><Text style={styles.label}>Personal library</Text><Text style={styles.labelSub}>Private sign-in and sync with your Windows app</Text></TouchableOpacity>
 
         <Text style={styles.sectionHead} accessibilityRole="header" onLayout={(event) => { sectionOffsets.current["Playback"] = event.nativeEvent.layout.y; }}>Playback</Text>
         <View style={styles.card}>

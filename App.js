@@ -34,6 +34,7 @@ import SearchScreen from "./screens/SearchScreen";
 import BookScreen from "./screens/BookScreen";
 import PlayerScreen from "./screens/PlayerScreen";
 import LibraryScreen from "./screens/LibraryScreen";
+import AccountScreen from "./screens/AccountScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import StatsScreen from "./screens/StatsScreen";
 import BookmarksScreen from "./screens/BookmarksScreen";
@@ -46,6 +47,7 @@ const SCREENS = {
   player: PlayerScreen,
   library: LibraryScreen,
   settings: SettingsScreen,
+  account: AccountScreen,
   stats: StatsScreen,
   bookmarks: BookmarksScreen,
   car: CarScreen,

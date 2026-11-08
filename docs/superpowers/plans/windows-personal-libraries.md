@@ -28,3 +28,7 @@ Server deployment requires identifying existing hosting and a durable volume. Do
 ## Verification and delivery status
 
 Mobile:48 suites/336 tests, typecheck and lint pass (four existing hook warnings). Backend:70 tests pass before installer tests. Desktop core and real-audio renderer scenarios pass, including late stream selection and stale resume revision regressions verified by mutation. Real SQLite HTTP contract phone→desktop→phone passes. Native Windows execution remains pending; server deployment remains pending because hosting terminal access is not available in this workspace. The public health endpoint still reports3.2.0 without accounts. Android account changes are not published yet.
+
+## Live deployment — 2026-11-08
+
+The owner ran the prepared installer on the host. Local and public health both returned HTTP200, version3.3.0 and accountsAvailable:true. The initial connection refusal was during restart. Android preview update group581a498c-7a6e-4c8c-9a6a-8d3bc138b2cd was published with Hermes bytecode98 for runtime3.2.0 from commitfd064b7. Native Windows QA and per-person invitations remain user setup steps.

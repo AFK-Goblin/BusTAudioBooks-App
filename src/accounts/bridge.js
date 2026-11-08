@@ -3,6 +3,10 @@ import { projectBook, sameBook, isAccountId } from './projection';
 const SESSION = 'bustaudio_account_session_v1';
 const OWNER = 'bustaudio_account_owner_v1';
 const BASELINES = 'bustaudio_account_baselines_v1';
+function countBooks(library) {
+  const books = Object.values(library).filter(book => book && typeof book === 'object');
+  return { total: books.length, inProgress: books.filter(book => book.progress?.position > 5 && !book.progress?.finished).length, finished: books.filter(book => book.progress?.finished).length };
+}
 const changed = () => new Error('Account or server changed. Sign in again before syncing.');
 
 // Dependencies keep native credential storage and playback outside the sync
@@ -67,6 +71,8 @@ export function createAccountBridge(deps) {
       if (response.status === 404 || response.status === 501) throw new Error('Personal libraries are not available on this server yet. Offline listening still works.');
       if (response.status === 401) throw new Error('Sign in again: the session or credentials were rejected.');
       if (response.status === 429) throw new Error('Too many attempts. Wait a little before trying again.');
+      if (route.startsWith('/library/') && response.status === 400) throw new Error('The server rejected this book’s metadata. Your phone copy is unchanged.');
+      if (response.status === 413) throw new Error('This book has more sync data than the server accepts. Your phone copy is unchanged.');
       throw new Error('Personal library request was rejected. Check your details or invite and try again.');
     }
     return { data, conflict: response.status === 409 };
@@ -126,7 +132,7 @@ export function createAccountBridge(deps) {
     async status() {
       const value = await session();
       const owner = await read(OWNER);
-      return { user: value?.user || null, owner, linked: !!value && sameOwner(owner, identity(value)) };
+      return { user: value?.user || null, owner, linked: !!value && sameOwner(owner, identity(value)), phoneLibrary: countBooks(await deps.getLibrary()), server: value ? new URL(value.prefix).host : null };
     },
     async authenticate(mode, details) {
       if (!['login', 'register'].includes(mode)) throw new Error('Invalid sign-in action.');
@@ -180,27 +186,47 @@ export function createAccountBridge(deps) {
         await guard(ctx);
         conflicts = new Map();
         const notices = [];
-        for (const id of new Set([...Object.keys(library), ...Object.keys(baselines), ...remote.keys()])) {
+        const ids = [...new Set([...Object.keys(library), ...Object.keys(baselines), ...remote.keys()])];
+        for (const [index, id] of ids.entries()) {
           await guard(ctx);
-          if (!isAccountId(id)) throw new Error('The phone library contains an invalid book id.');
-          const local = projectBook(Object.prototype.hasOwnProperty.call(library, id) ? library[id] : null);
-          const base = baselines[id];
-          const cloud = remote.get(id);
-          if (base && !cloud) throw new Error('The server is missing a previously synced revision. Sync stopped to protect your library.');
-          if (!base) {
-            if (cloud && local && !sameBook(local, cloud.book)) conflict(id, local, cloud);
-            else if (cloud) await pull(ctx, baselines, id, local, cloud, notices);
-            else if (local) await push(ctx, baselines, id, local, null);
-            continue;
+          try {
+            if (!isAccountId(id)) throw new Error('The phone library contains an invalid book id.');
+            const local = projectBook(Object.prototype.hasOwnProperty.call(library, id) ? library[id] : null);
+            const base = baselines[id];
+            const cloud = remote.get(id);
+            if (base && !cloud) throw new Error('The server is missing a previously synced revision. Sync stopped to protect your library.');
+            if (!base) {
+              if (cloud && local && !sameBook(local, cloud.book)) conflict(id, local, cloud);
+              else if (cloud) await pull(ctx, baselines, id, local, cloud, notices);
+              else if (local) await push(ctx, baselines, id, local, null);
+              continue;
+            }
+            if (cloud.revision < base.revision) throw new Error('The server library is older than this phone’s last sync. Sync stopped to protect your library.');
+            const localChanged = !sameBook(local, base.local);
+            const remoteChanged = cloud.revision !== base.revision;
+            if (localChanged && (remoteChanged || base.deleted)) conflict(id, local, cloud);
+            else if (remoteChanged) await pull(ctx, baselines, id, local, cloud, notices);
+            else if (localChanged) await push(ctx, baselines, id, local, cloud);
+          } catch (error) {
+            await guard(ctx);
+            const title = library[id]?.title || remote.get(id)?.book?.title || 'Untitled book';
+            throw new Error('Sync stopped at “' + String(title).slice(0,120) + '” (' + (index + 1) + ' of ' + ids.length + '). ' + error.message);
           }
-          if (cloud.revision < base.revision) throw new Error('The server library is older than this phone’s last sync. Sync stopped to protect your library.');
-          const localChanged = !sameBook(local, base.local);
-          const remoteChanged = cloud.revision !== base.revision;
-          if (localChanged && (remoteChanged || base.deleted)) conflict(id, local, cloud);
-          else if (remoteChanged) await pull(ctx, baselines, id, local, cloud, notices);
-          else if (localChanged) await push(ctx, baselines, id, local, cloud);
         }
-        return { conflicts: [...conflicts.values()], notices };
+        // Confirm persisted records before reporting a successful sync.
+        const { data: confirmed } = await request(ctx, '/library');
+        const verified = recordMap(confirmed.books);
+        for (const [id, base] of Object.entries(baselines)) {
+          if (!verified.has(id) || verified.get(id).revision < base.revision) throw new Error('The server did not confirm every synced book. Sync again; your phone library is preserved.');
+        }
+        for (const [id, record] of verified) {
+          const knownRevision = conflicts.get(id)?.remote.revision || baselines[id]?.revision || 0;
+          if (record.revision > knownRevision) throw new Error('Your account changed during sync on another device. Sync again to load those changes; your phone library is preserved.');
+        }
+        const latest = await deps.getLibrary();
+        await guard(ctx);
+        const summary = { phone: countBooks(latest), cloud: countBooks([...verified.values()].filter(record => !record.deleted).map(record => record.book)) };
+        return { conflicts: [...conflicts.values()], notices, summary };
       });
     },
     async resolveConflict(id, choice) {

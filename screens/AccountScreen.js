@@ -16,6 +16,8 @@ export default function AccountScreen({ nav }) {
   const [message, setMessage] = useState('');
   const [conflicts, setConflicts] = useState([]);
   const [notices, setNotices] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const counts = value => `${value.total} books · ${value.inProgress} in progress · ${value.finished} finished`;
   useEffect(() => {
     let alive = true;
     accountBridge.status().then(value => { if (alive) setAccount(value); }).catch(() => { if (alive) setMessage('Could not read your account. Try reopening this screen.'); });
@@ -28,9 +30,11 @@ export default function AccountScreen({ nav }) {
     finally { setBusy(false); }
   }
   async function sync() {
+    setSummary(null);
     const result = await accountBridge.sync();
-    setConflicts(result.conflicts); setNotices(result.notices);
-    setMessage(result.conflicts.length ? 'Choose which version to keep for the books below.' : 'Sync complete. Your personal library is up to date.');
+    setConflicts(result.conflicts); setNotices(result.notices); setSummary(result.summary || null);
+    if (result.summary) setAccount(value => ({ ...value, phoneLibrary: result.summary.phone }));
+    setMessage(result.conflicts.length ? 'Choose which version to keep for the books below.' : 'Sync complete. Refresh your Windows library to load these books.');
   }
   function link() {
     Alert.alert('Link this phone library?', `Add this phone’s books and listening history to ${account.user.username}’s private library? This phone stays linked to that account. Playback will close so your place can sync safely.`, [
@@ -46,10 +50,13 @@ export default function AccountScreen({ nav }) {
       <Text style={styles.help}>Your saved books, bookmarks and listening progress belong to your account. The audiobook catalogue is shared.</Text>
       {account?.user ? <View style={styles.card}>
         <Text style={styles.heading}>Signed in as {account.user.username}</Text>
+        {account.server && <Text style={styles.help}>Server: {account.server}</Text>}
+        {account.phoneLibrary && <Text style={styles.help}>On this phone: {counts(account.phoneLibrary)}</Text>}
+        {summary && <Text style={styles.help}>Confirmed in your account: {counts(summary.cloud)}</Text>}
         <Text style={styles.help}>{account.linked ? 'Sync is manual. Sync before switching between your phone and computer. Sync closes playback and saves your current place. Audio downloads stay on this device.' : 'Signing in does not upload this phone’s library. Link it only if these books and listening history belong to you.'}</Text>
         {button(account.linked ? 'Sync now' : 'Link and sync this phone', account.linked ? () => run(sync) : link, true)}
         <Text style={styles.help}>Signing out keeps your local books on this phone. Only the linked account can sync them again. Switching this phone library to another owner is not supported.</Text>
-        {button('Sign out', () => run(async () => { await accountBridge.signOut(); setAccount(await accountBridge.status()); setConflicts([]); setNotices([]); setMessage('Signed out. Your local books remain on this phone.'); }))}
+        {button('Sign out', () => run(async () => { await accountBridge.signOut(); setSummary(null); setAccount(await accountBridge.status()); setConflicts([]); setNotices([]); setMessage('Signed out. Your local books remain on this phone.'); }))}
       </View> : <View style={styles.card}>
         <Text style={styles.heading}>{mode === 'login' ? 'Sign in' : 'Create your private account'}</Text>
         <Text style={styles.help}>{mode === 'register' ? 'Ask the server owner for an invitation made for your username. Choose a password of at least 12 characters.' : 'Use the same account on Windows and your phone. New users need a personal invitation from the server owner.'}</Text>
@@ -68,7 +75,7 @@ export default function AccountScreen({ nav }) {
         <Text style={styles.help}>Phone: {item.local ? `part ${(item.local.progress?.trackIndex || 0) + 1}, ${formatTime(item.local.progress?.position || 0)}` : 'removed'}</Text>
         <Text style={styles.help}>Cloud: {item.remote.deleted ? 'removed' : `part ${(item.remote.book?.progress?.trackIndex || 0) + 1}, ${formatTime(item.remote.book?.progress?.position || 0)}`}</Text>
         <Text style={styles.help}>This choice includes saved status, ratings and bookmarks. An offline copy stays on the phone if the cloud version was removed.</Text>
-        {['phone', 'cloud'].map(choice => <View key={choice}>{button(choice === 'phone' ? 'Keep phone' : 'Use cloud', () => run(async () => { const result = await accountBridge.resolveConflict(item.id, choice); setConflicts(result.conflicts); setNotices(result.notices); setMessage(result.conflicts.length ? 'Review the remaining changes below.' : 'Sync complete.'); }))}</View>)}
+        {['phone', 'cloud'].map(choice => <View key={choice}>{button(choice === 'phone' ? 'Keep phone' : 'Use cloud', () => run(async () => { setSummary(null); const result = await accountBridge.resolveConflict(item.id, choice); setConflicts(result.conflicts); setNotices(result.notices); setMessage(result.conflicts.length ? 'Review the remaining changes below.' : 'Sync complete.'); }))}</View>)}
       </View>)}
     </ScrollView>
   </KeyboardAvoidingView>;

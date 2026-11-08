@@ -10,8 +10,11 @@ export function projectBook(book) {
   if (book.progress && typeof book.progress === 'object') {
     out.progress = {};
     for (const key of ['position', 'duration', 'trackIndex', 'lastPlayed', 'rate']) if (Number.isFinite(book.progress[key])) out.progress[key] = book.progress[key];
+    // Native players use negative duration sentinels while a track is unknown.
+    // Keep position/history intact and send the API's unknown-duration form.
+    if (out.progress.duration < 0) out.progress.duration = 0;
     if (typeof book.progress.finished === 'boolean') out.progress.finished = book.progress.finished;
-    if (Array.isArray(book.progress.trackDurations)) out.progress.trackDurations = book.progress.trackDurations.map(n => Number.isFinite(n) ? n : null);
+    if (Array.isArray(book.progress.trackDurations)) out.progress.trackDurations = book.progress.trackDurations.map(n => Number.isFinite(n) && n >= 0 ? n : null);
   }
   if (Array.isArray(book.bookmarks)) out.bookmarks = book.bookmarks.map(mark => {
     const safe = {};

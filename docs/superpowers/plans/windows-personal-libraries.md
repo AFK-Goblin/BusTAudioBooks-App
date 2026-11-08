@@ -32,3 +32,11 @@ Mobile:48 suites/336 tests, typecheck and lint pass (four existing hook warnings
 ## Live deployment — 2026-11-08
 
 The owner ran the prepared installer on the host. Local and public health both returned HTTP200, version3.3.0 and accountsAvailable:true. The initial connection refusal was during restart. Android preview update group581a498c-7a6e-4c8c-9a6a-8d3bc138b2cd was published with Hermes bytecode98 for runtime3.2.0 from commitfd064b7. Native Windows QA and per-person invitations remain user setup steps.
+
+## Missing-library sync investigation — 2026-11-08
+
+The owner's read-only diagnostic for baz reported two active books, both readable by Windows, with no removed records or validation problems. The missing in-progress/finished books have not reached the server; the exact phone-specific cause is still unconfirmed.
+
+Reproduced a real upload blocker: native playback can persist a negative unknown-duration sentinel, which the account API rejects. Sync now projects unknown durations to zero (and unknown entries in trackDurations to null), preserving local history and downloads. The account screen shows local and server-confirmed totals/in-progress/finished counts and the server hostname. Rejected uploads identify the book and its position in the sync. A final server read checks acknowledged revisions and detects concurrent additions/deletions before reporting completion.
+
+Validation: regression tests failed before each fix; 48 suites / 343 tests pass, real SQLite HTTP phone → Windows → phone contract passes including legacy negative durations, typecheck passes, lint has zero errors and four existing hook warnings. Android export uses verified Hermes bytecode 98 for runtime 3.2.0. Review identified a concurrent-change confirmation edge case, reproduced and covered by two regression tests. User verification of the missing library remains pending after the phone update and a fresh sync.

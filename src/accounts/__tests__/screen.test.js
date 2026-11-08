@@ -34,3 +34,13 @@ test('sync exposes both conflict choices and cloud deletion information', async 
   expect(screen.getByText('Use cloud')).toBeTruthy();
   expect(screen.getByText(/Cloud: removed/)).toBeTruthy();
 });
+
+test('sync screen shows phone counts and server-confirmed counts instead of an unqualified success', async () => {
+  accountBridge.status.mockResolvedValue({ user: { id: 'baz', username: 'baz' }, linked: true, phoneLibrary: { total: 8, inProgress: 5, finished: 3 } });
+  accountBridge.sync.mockResolvedValue({ conflicts: [], notices: [], summary: { phone: { total: 8, inProgress: 5, finished: 3 }, cloud: { total: 8, inProgress: 5, finished: 3 } } });
+  await render(<AccountScreen nav={{ goBack() {} }} />);
+  expect(await screen.findByText('On this phone: 8 books · 5 in progress · 3 finished')).toBeTruthy();
+  await fireEvent.press(await screen.findByText('Sync now'));
+  expect(await screen.findByText('Confirmed in your account: 8 books · 5 in progress · 3 finished')).toBeTruthy();
+  expect(screen.queryByText('Sync complete. Your personal library is up to date.')).toBeNull();
+});

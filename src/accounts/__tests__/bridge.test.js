@@ -4,11 +4,11 @@ import { createAccountBridge } from '../bridge';
 import { getLibrary, getBook, upsertBook, applyAccountBook } from '../../library';
 
 const book = { id: 'b', title: 'Book', progress: { position: 10 } };
-let bridge, records, puts, prefix, secure, pending, currentUser, hangLogout, logoutAborted, hangBody, onClose;
+let bridge, records, puts, prefix, secure, pending, currentUser, hangLogout, logoutAborted, hangBody, onClose, rejectId, omitFromReads, onLibraryRead;
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 beforeEach(async () => {
   await AsyncStorage.clear();
-  records = {}; puts = []; pending = null; hangLogout = false; logoutAborted = false; hangBody = false; onClose = null; prefix = 'https://books.test/config'; currentUser = 'alice';
+  records = {}; puts = []; rejectId = null; omitFromReads = null; onLibraryRead = null; pending = null; hangLogout = false; logoutAborted = false; hangBody = false; onClose = null; prefix = 'https://books.test/config'; currentUser = 'alice';
   const values = new Map();
   secure = { getItemAsync: async k => values.get(k) || null, setItemAsync: async (k,v) => values.set(k,v), deleteItemAsync: async k => values.delete(k) };
   bridge = createAccountBridge({ storage: AsyncStorage, secure, getPrefix: async () => prefix,
@@ -21,9 +21,11 @@ beforeEach(async () => {
         return reply({ ok: true });
       }
       if (pending) await pending;
-      if (route === '/library') return hangBody ? { ok: true, status: 200, json: () => new Promise(() => {}) } : reply({ books: Object.values(records) });
+      if (route === '/library' && onLibraryRead) onLibraryRead();
+      if (route === '/library') return hangBody ? { ok: true, status: 200, json: () => new Promise(() => {}) } : reply({ books: Object.values(records).filter(record => record.id !== omitFromReads) });
       const id = decodeURIComponent(route.split('/').pop());
       const body = JSON.parse(options.body); puts.push(body);
+      if (id === rejectId) return reply({ error: 'Invalid request.' }, 400);
       if (body.baseRevision !== (records[id]?.revision || 0)) return reply({ error: 'conflict', record: records[id] }, 409);
       records[id] = { id, revision: body.baseRevision + 1, deleted: !!body.deleted, book: body.book || null };
       return reply({ record: records[id] });
@@ -151,4 +153,53 @@ test('long catalogue ids supported by the server can be pulled without truncatio
   records[id] = { id, revision: 1, deleted: false, book: { id, title: 'Long catalogue title' } };
   expect((await bridge.sync()).conflicts).toEqual([]);
   expect((await getBook(id)).title).toBe('Long catalogue title');
+});
+
+test('sync reports phone and confirmed cloud counts across in-progress and finished books', async () => {
+  for (let i = 0; i < 8; i++) await upsertBook({ id: 'book-' + i, title: 'Book ' + i, format: i % 2 ? 'MP3' : 'M4B', progress: { position: 40, finished: i >= 5 } });
+  await linked();
+  expect((await bridge.status()).phoneLibrary).toEqual({ total: 8, inProgress: 5, finished: 3 });
+  const result = await bridge.sync();
+  expect(result.summary.phone).toEqual({ total: 8, inProgress: 5, finished: 3 });
+  expect(result.summary.cloud).toEqual({ total: 8, inProgress: 5, finished: 3 });
+});
+test('a rejected third book identifies the stopping point and preserves earlier successful uploads', async () => {
+  for (let i = 0; i < 4; i++) await upsertBook({ id: 'book-' + i, title: 'Title ' + i });
+  await linked(); rejectId = 'book-2';
+  await expect(bridge.sync()).rejects.toThrow(/Title 2.*3 of 4.*metadata/i);
+  expect(Object.keys(records)).toEqual(['book-0', 'book-1']);
+  expect(Object.keys(await getLibrary())).toHaveLength(4);
+  rejectId = null;
+  expect((await bridge.sync()).summary.cloud.total).toBe(4);
+  expect(records['book-0'].revision).toBe(1);
+});
+test('sync does not report success when the final server read omits an acknowledged book', async () => {
+  await upsertBook(book); await linked(); omitFromReads = 'b';
+  await expect(bridge.sync()).rejects.toThrow(/confirm/i);
+  expect((await getBook('b')).title).toBe('Book');
+});
+test('unknown native durations are projected as unknown without changing local listening history', async () => {
+  const unknown = -9223372036854775.807;
+  await upsertBook({ ...book, format: 'MP3', progress: { position: 123, duration: unknown, trackIndex: 2, trackDurations: [60, unknown, null], finished: true } });
+  await linked(); await bridge.sync();
+  expect(puts[0].book.progress).toEqual({ position: 123, duration: 0, trackIndex: 2, trackDurations: [60, null, null], finished: true });
+  expect((await getBook('b')).progress.duration).toBe(unknown);
+  expect((await getBook('b')).progress.position).toBe(123);
+});
+
+test.each(['delete', 'add'])('sync asks for another pass when a device makes a concurrent %s during confirmation', async action => {
+  await upsertBook({ ...book, downloaded: true, files: [{ uri: 'file:///b' }] });
+  await linked();
+  let reads = 0;
+  onLibraryRead = () => {
+    if (++reads !== 2) return;
+    if (action === 'delete') records.b = { id: 'b', revision: 2, deleted: true, book: null };
+    else records.extra = { id: 'extra', revision: 1, deleted: false, book: { id: 'extra', title: 'From Windows' } };
+  };
+  await expect(bridge.sync()).rejects.toThrow(/account changed during sync.*sync again/i);
+  expect(await getBook('b')).toMatchObject({ downloaded: true, files: [{ uri: 'file:///b' }], progress: { position: 10 } });
+  onLibraryRead = null;
+  const result = await bridge.sync();
+  expect(result.summary.cloud.total).toBe(action === 'delete' ? 0 : 2);
+  expect(puts).toHaveLength(1);
 });

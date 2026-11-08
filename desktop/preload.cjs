@@ -2,6 +2,8 @@
 const {contextBridge,ipcRenderer}=require('electron');
 const call=(method,payload)=>ipcRenderer.invoke('bustaudio:'+method,payload).then(result=>{if(!result.ok){const error=new Error(result.error);error.status=result.status;throw error;}return result.value;});
 contextBridge.exposeInMainWorld('books',Object.freeze({
+ desktopInfo:()=>call('desktopInfo'),setAccent:key=>call('setAccent',key),checkForUpdates:()=>call('checkForUpdates'),installUpdate:()=>call('installUpdate'),
+ onUpdateStatus:callback=>{if(typeof callback!=='function')return ()=>{};const listener=(_event,status)=>callback(status);ipcRenderer.on('bustaudio:update-status',listener);return ()=>ipcRenderer.removeListener('bustaudio:update-status',listener);},
  close:()=>call('close'),onBeforeClose:callback=>{if(typeof callback==='function')ipcRenderer.on('bustaudio:before-close',()=>callback());},
  state:()=>call('state'),configure:link=>call('configure',link),login:form=>call('login',form),register:form=>call('register',form),logout:()=>call('logout'),
  refresh:()=>call('refresh'),search:(query,page=1)=>call('search',{query,page}),details:id=>call('details',id),streams:id=>call('streams',id),

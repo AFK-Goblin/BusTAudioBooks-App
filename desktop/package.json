@@ -1,7 +1,7 @@
 {
   "name": "bustaudio-desktop",
   "productName": "BusTAudio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Your private BusTAudio audiobook library for Windows",
   "author": "BusTAudio",
@@ -10,18 +10,65 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
-    "test:ui": "node test/smoke.cjs && node test/playback.cjs && node test/playback-races.cjs",
-    "build:win": "node build.cjs",
-    "test:contract": "node test/contract.cjs"
+    "test:ui": "node test/smoke.cjs && node test/playback.cjs && node test/playback-races.cjs && node test/appearance.cjs",
+    "build:win": "electron-builder --win nsis --x64 --publish never",
+    "test:contract": "node test/contract.cjs",
+    "build:portable": "node build.cjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "js-yaml": "4.3.2",
     "playwright": "1.65.0",
     "yazl": "3.3.1"
   },
   "overrides": {
     "glob": "14.0.4",
     "minimatch": "11.0.5"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "build": {
+    "appId": "com.bustybaz.bustaudio",
+    "productName": "BusTAudio",
+    "directories": {
+      "output": "build"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "core.cjs",
+      "updates.cjs",
+      "ui/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "../assets/icon.png",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "BusTAudio-Setup-${version}-${arch}.${ext}",
+      "include": "installer.nsh"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/download/desktop-stable/"
+    }
   }
 }

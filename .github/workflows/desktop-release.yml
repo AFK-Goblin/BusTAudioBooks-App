@@ -1,0 +1,83 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright install chromium
+      - run: npm run test:ui
+      - run: npm run build:win
+      - name: Create reviewable draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release create "desktop-v$VERSION" --draft --latest=false --target "$GITHUB_SHA" --title "BusTAudio for Windows $VERSION" --notes-file RELEASE-NOTES.md "build/BusTAudio-Setup-$VERSION-x64.exe" "build/BusTAudio-Setup-$VERSION-x64.exe.blockmap" build/latest.yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            desktop/build/BusTAudio-Setup-*.exe
+            desktop/build/BusTAudio-Setup-*.exe.blockmap
+            desktop/build/latest.yml
+
+  promote:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'desktop-v')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: desktop
+      - name: Download and verify published Windows assets
+        shell: bash
+        run: |
+          gh release download "$RELEASE_TAG" --dir release-assets --pattern 'BusTAudio-Setup-*-x64.exe' --pattern 'BusTAudio-Setup-*-x64.exe.blockmap' --pattern latest.yml
+          if gh release view desktop-stable >/dev/null 2>&1; then
+            gh release download desktop-stable --dir previous-release --pattern latest.yml
+            node desktop/verify-release.cjs release-assets "$RELEASE_TAG" previous-release/latest.yml
+          else
+            node desktop/verify-release.cjs release-assets "$RELEASE_TAG"
+          fi
+      - name: Promote installer before update metadata
+        shell: bash
+        run: |
+          if ! gh release view desktop-stable >/dev/null 2>&1; then
+            gh release create desktop-stable --latest=false --target "$GITHUB_SHA" --title 'Windows automatic updates' --notes 'Stable update feed for the installed Windows app. Use the latest Windows versioned release for release notes.'
+          fi
+          gh release upload desktop-stable release-assets/*.exe release-assets/*.blockmap --clobber
+          gh release upload desktop-stable release-assets/latest.yml --clobber

@@ -8,6 +8,41 @@ let state = {books:[],recoveries:[]}, page = 'library', filter = 'All', query = 
 let generation = 0, detailGeneration = 0, active = null, playerNode, saveQueue = Promise.resolve(), lastSave = 0, noticeTimer;
 let timeNode, seekNode, playNode, importPreview = null, libraryQuery = '', librarySort = 'recent', signingOut = false;
 let closing = false, playbackGeneration = 0;
+let desktop = {version:'',accent:'violet',updates:{status:'disabled'}}, updateRevision = 0, installing = false;
+const accents = {violet:'Violet',blue:'Blue',teal:'Teal',orange:'Orange',pink:'Pink'};
+function icon(name) {
+  const paths = {library:'M4 4h5v16H4z M12 4h3v16h-3z M18 4l3 15',search:'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',settings:'M4 7h16 M4 17h16 M8 4v6 M16 14v6',play:'M8 5l11 7-11 7z',headphones:'M4 14v-2a8 8 0 0 1 16 0v2 M4 13h3v7H4z M17 13h3v7h-3z',refresh:'M20 7v5h-5 M4 17v-5h5 M6 6a8 8 0 0 1 14 6 M4 12a8 8 0 0 0 14 6',download:'M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5'};
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  for(const [key,value] of Object.entries({viewBox:'0 0 24 24',width:'20',height:'20',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'}))svg.setAttribute(key,value);
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',paths[name]||paths.library);svg.append(path);return svg;
+}
+function applyAccent(key) { desktop.accent=accents[key]?key:'violet';document.documentElement.dataset.accent=desktop.accent; }
+function updateStatus(value) { if(value?.status){desktop.updates=value;updateRevision++;renderUpdates();} }
+function playbackLocked() { return installing || desktop.updates.status==='installing'; }
+async function restartForUpdate() {
+  if(installing||desktop.updates.status!=='ready')return;
+  installing=true;playbackGeneration++;renderUpdates();audio.pause();
+  try {
+    await checkpoint();state=await api.state();
+    if(active?.blocked||state.recoveries.length){notice('Resolve unsaved changes before restarting to update.',true);return;}
+    updateStatus(await api.installUpdate());
+  } finally { installing=false;renderUpdates(); }
+}
+function renderUpdates() {
+  const update=desktop.updates, status=update.status;
+  for(const slot of document.querySelectorAll('.update-slot')) {
+    slot.replaceChildren();
+    if(status==='ready')slot.append(el('div',{class:'update-banner'},icon('download'),el('span',{},`Update${update.version?' '+update.version:''} is ready`),button('Restart to update',restartForUpdate,'quiet')));
+    const action=slot.querySelector('button');if(action)action.disabled=installing;
+  }
+  const card=document.querySelector('.update-card');if(!card)return;
+  const messages={disabled:'Automatic updates are available in the installed Windows app. Install the latest setup to enable them.',idle:'Updates download automatically in the background. You choose when to restart.',checking:'Checking for updates…',downloading:`Downloading update${update.version?' '+update.version:''}…`,ready:`Update${update.version?' '+update.version:''} is ready to install. Restart when you’re ready.`,current:'You’re up to date.',error:update.message||'Could not check for updates. Please try again.',installing:'Restarting to install the update…'};
+  card.replaceChildren(el('div',{class:'panel-heading'},icon('download'),el('h2',{},'App updates'),el('small',{class:'version'},desktop.version?'Version '+desktop.version:'Windows app')),el('p',{'role':'status'},messages[status]||messages.idle));
+  if(status==='downloading')card.append(el('progress',{max:100,value:Number.isFinite(update.percent)?update.percent:undefined,'aria-label':'Update download progress'}));
+  if(status==='ready')card.append(button('Restart to update',restartForUpdate,'primary'),el('small',{class:'update-note'},'Playback pauses and your place is saved before restarting.'));
+  else if(['idle','current','error'].includes(status)&&api.checkForUpdates)card.append(button(status==='error'?'Try again':'Check for updates',async()=>updateStatus(await api.checkForUpdates())));
+  if(installing)for(const item of card.querySelectorAll('button'))item.disabled=true;
+}
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key,value] of Object.entries(attrs)) {
@@ -25,6 +60,7 @@ function notice(message, error = false) {
   clearTimeout(noticeTimer); noticeTimer = setTimeout(()=>{node.className='';},8000);
 }
 async function run(action) {
+  if(playbackLocked())return;
   try { return await action(); }
   catch(error) {
     notice(error.message || 'Something went wrong. Please try again.', true);
@@ -32,7 +68,7 @@ async function run(action) {
     if (next) { state = next; if (!state.user) stopPlayer(); render(); }
   }
 }
-function brand() { return el('div',{class:'brand'},el('span',{class:'brand-mark'},'b'), 'BusTAudio'); }
+function brand() { return el('div',{class:'brand'},el('span',{class:'brand-mark'},icon('headphones')), 'BusTAudio'); }
 function field(label, type, name, value='') { return el('label',{},label,el('input',{type,name,value,required:true,autocomplete:type==='password'?'current-password':'off'})); }
 function accept(next) { state = next; render(); }
 function safeUrl(value) { try { const url = new URL(value); return url.protocol==='https:' && !url.username && !url.password ? url.href : null; } catch { return null; } }
@@ -79,17 +115,18 @@ function render() {
   if (!state.user) { dialog.close(); detailGeneration++; renderAuth(); return; }
   const sidebar=el('aside',{class:'sidebar'},brand());
   const nav=el('nav',{'aria-label':'Main navigation'});
-  for (const [key,title] of [['library','Your library'],['search','Search catalogue'],['settings','Settings']]) nav.append(button(title,()=>{page=key;render();},'nav'+(page===key?' active':'')));
-  sidebar.append(nav,el('div',{class:'account'},el('span',{class:'avatar'},state.user.username[0].toUpperCase()),state.user.username,el('small',{},'Personal library')));
+  for (const [key,title] of [['library','Your library'],['search','Search catalogue'],['settings','Settings']]) { const item=button('',()=>{page=key;render();},'nav'+(page===key?' active':''));item.append(icon(key),title);if(page===key)item.setAttribute('aria-current','page');nav.append(item); }
+  sidebar.append(el('div',{class:'sidebar-label'},'YOUR LISTENING SPACE'),nav,el('div',{class:'sidebar-note'},icon('headphones'),el('p',{},'Good stories.\nAlways with you.')),el('div',{class:'account'},el('span',{class:'avatar'},state.user.username[0].toUpperCase()),el('div',{},el('strong',{},state.user.username),el('small',{},'Personal library'))));
   const content=el('main',{class:'content'});
+  content.append(el('div',{class:'update-slot'}));
   const shell=el('div',{class:'shell'},sidebar,content);
   if(page==='library')renderLibrary(content);
   else if(page==='search')renderSearch(content);
   else renderSettings(content);
   playerNode=el('footer',{class:'player inactive'}); shell.append(playerNode);
-  app.replaceChildren(shell);renderPlayer();
+  app.replaceChildren(shell);renderPlayer();renderUpdates();
 }
-function heading(node,title,description,action) { node.append(el('header',{class:'topbar'},el('div',{},el('div',{class:'eyebrow'},'YOUR OWN CORNER OF THE CATALOGUE'),el('h1',{},title),el('p',{},description)),action)); }
+function heading(node,title,description,action) { node.append(el('header',{class:'topbar'},el('div',{},el('div',{class:'eyebrow'},'A LITTLE TIME. A DIFFERENT WORLD.'),el('h1',{},title),el('p',{},description)),action)); }
 function describeCopy(book, deleted = false) {
   if(deleted || !book)return 'Removed from library';
   return [book.progress?.finished?'Finished':('Part '+((book.progress?.trackIndex||0)+1)+' · '+clock(book.progress?.position)), (book.bookmarks?.length||0)+' bookmarks',book.saved?'Saved':'Not saved'].join(' · ');
@@ -109,6 +146,7 @@ function cards(books) {
   return el('div',{class:'grid'},books.map(book=>{
     const card=button('',()=>openDetails(book),'book');card.title=book.title;
     card.append(cover(book),el('h3',{},book.title),el('p',{},book.author||'Audiobook'));
+    if(book.progress?.lastPlayed)card.append(el('small',{class:'book-meta'},book.progress.finished?'Completed':`Part ${(book.progress.trackIndex||0)+1} · ${clock(book.progress.position)} listened`));
     if(book.progress?.duration>0)card.append(el('div',{class:'book-progress'},el('progress',{max:book.progress.duration,value:book.progress.position||0,'aria-label':'Listening progress'})));
     return card;
   }));
@@ -116,6 +154,11 @@ function cards(books) {
 function renderLibrary(node) {
   heading(node,'Your library','Pick up where you left off, or begin something new.',button('Refresh library',async()=>accept(await api.refresh())));
   recoveryPanel(node);
+  const recent=[...state.books].filter(book=>book.progress?.lastPlayed&&!book.progress.finished&&!state.recoveries.some(item=>item.id===book.id)).sort((a,b)=>b.progress.lastPlayed-a.progress.lastPlayed)[0];
+  if(recent&&filter==='All'&&!libraryQuery) {
+    const resume=button('',()=>listen(current(recent)),'primary continue-button');resume.append(icon('play'),'Continue listening');
+    node.append(el('section',{class:'continue-card','aria-label':'Continue your last audiobook'},cover(recent),el('div',{class:'continue-copy'},el('div',{class:'eyebrow'},'PICK UP WHERE YOU LEFT OFF'),el('h2',{},'Back to '+recent.title),el('p',{},recent.author||'Audiobook'),el('small',{},`Part ${(recent.progress.trackIndex||0)+1} · ${clock(recent.progress.position)} into this part`),resume)));
+  }
   const tabs=el('div',{class:'tabs','aria-label':'Library filters'});
   for(const label of ['All','Continue listening','Saved','Finished'])tabs.append(button(label,()=>{filter=label;render();},filter===label?'active':''));
   node.append(tabs);
@@ -151,6 +194,9 @@ async function search(number) {
 function renderSettings(node) {
   heading(node,'Settings','Your account and library on this computer.');
   recoveryPanel(node);
+  const choices=el('div',{class:'accent-choices','aria-label':'Accent colour'});
+  for(const [key,name] of Object.entries(accents)) {const choice=button('',async()=>{applyAccent(api.setAccent?await api.setAccent(key):key);for(const item of choices.querySelectorAll('button'))item.setAttribute('aria-pressed',String(item.dataset.colour===desktop.accent));},'accent-choice');choice.dataset.colour=key;choice.setAttribute('aria-pressed',String(key===desktop.accent));choice.append(el('span',{class:'swatch','aria-hidden':'true'}),name);choices.append(choice);}
+  node.append(el('section',{class:'panel'},el('h2',{},'Appearance'),el('p',{},'The same familiar dark theme as your phone. Choose an accent for this computer.'),choices),el('section',{class:'panel update-card','aria-label':'App updates'}));
   if(signingOut)node.append(el('section',{class:'panel recovery'},el('h2',{},'Unsaved changes remain on this computer'),el('p',{},'Signing out now will discard these local changes. You can cancel and resolve them first.'),button('Sign out and discard local changes',()=>logout(true)),button('Stay signed in',()=>{signingOut=false;render();})));
   node.append(el('section',{class:'panel'},el('h2',{},'Listening across devices'),el('p',{},'Windows saves progress while you listen. On your phone, open Settings → Personal library and choose Sync now before switching devices. The phone asks before linking its existing books to your account.'),el('p',{},'Audio streams on Windows. Downloads already on your phone stay there.')));
   const backup=el('section',{class:'panel'},el('h2',{},'Bring your books with you'),el('p',{},'Import a BusTAudio JSON backup into your account. Audio files and server credentials are excluded. Existing books are held for your review.'));
@@ -222,6 +268,7 @@ async function listen(book,index,position) {
   dialog.close();await loadTrack(chosenPosition);
 }
 async function loadTrack(position) {
+  if(playbackLocked())return;
   const target=active;if(!target)return;
   const stream=target.streams[target.index];
   target.resume=position;target.ready=false;audio.src=stream.url;audio.playbackRate=target.book.progress?.rate||1;
@@ -265,14 +312,14 @@ function renderPlayer() {
   if(!active){playerNode.className='player inactive';playerNode.replaceChildren(el('span',{},'Choose a book and make yourself comfortable.'));return;}
   const target=active;playerNode.className='player';
   const title=el('div',{class:'player-title',title:target.book.title},target.book.title);
-  const caption=el('div',{class:'player-caption',title:target.streams[target.index].title},`Part ${target.index+1} · ${target.streams[target.index].title}`);
+  const caption=el('div',{class:'player-caption',tabindex:0,title:target.streams[target.index].title},`Part ${target.index+1} · ${target.streams[target.index].title}`);
   playNode=button(audio.paused?'▶':'Ⅱ',async()=>{if(target.blocked){notice('Review unsaved changes before continuing.',true);return;}if(audio.paused)await audio.play();else{audio.pause();await checkpoint();}},'play');playNode.setAttribute('aria-label',audio.paused?'Play':'Pause');
   const transport=el('div',{class:'transport'},button('−15 s',()=>{audio.currentTime=Math.max(0,audio.currentTime-15);}),playNode,button('+30 s',()=>{audio.currentTime=Math.min(audio.duration||0,audio.currentTime+30);}));
-  seekNode=el('input',{type:'range',min:0,max:Number.isFinite(audio.duration)?audio.duration:0,step:1,value:audio.currentTime||0,'aria-label':'Listening position',onChange:event=>{audio.currentTime=Number(event.target.value);run(checkpoint);}});
+  seekNode=el('input',{type:'range',min:0,max:Number.isFinite(audio.duration)?audio.duration:0,step:1,value:audio.currentTime||0,'aria-label':'Listening position',onChange:event=>{if(playbackLocked())return;audio.currentTime=Number(event.target.value);run(checkpoint);}});
   timeNode=el('span',{},clock(audio.currentTime));
   const duration=el('span',{},clock(audio.duration));
-  const speed=el('select',{'aria-label':'Playback speed',onChange:event=>{audio.playbackRate=Number(event.target.value);run(checkpoint);}},[0.75,1,1.25,1.5,1.75,2,2.5,3].map(rate=>el('option',{value:rate},rate+'×')));speed.value=String(audio.playbackRate);
-  playerNode.replaceChildren(el('div',{},title,caption),el('div',{class:'player-controls'},transport,el('div',{class:'scrubber'},timeNode,seekNode,duration)),el('div',{class:'player-side'},speed,button('Parts',()=>openDetails(active.book)),button('☆',async()=>{
+  const speed=el('select',{'aria-label':'Playback speed',onChange:event=>{if(playbackLocked())return;audio.playbackRate=Number(event.target.value);run(checkpoint);}},[0.75,1,1.25,1.5,1.75,2,2.5,3].map(rate=>el('option',{value:rate},rate+'×')));speed.value=String(audio.playbackRate);
+  playerNode.replaceChildren(el('div',{class:'player-book'},cover(target.book),el('div',{class:'player-copy'},title,caption)),el('div',{class:'player-controls'},transport,el('div',{class:'scrubber'},timeNode,seekNode,duration)),el('div',{class:'player-side'},speed,button('Parts',()=>openDetails(active.book)),button('☆',async()=>{
     audio.pause();await checkpoint();if(!active||active.blocked)return;
     await updateBook({...active.book,bookmarks:[...(active.book.bookmarks||[]),{createdAt:Date.now(),position:audio.currentTime,trackIndex:active.index,note:''}]});notice('Bookmark added.');
   })));
@@ -280,12 +327,13 @@ function renderPlayer() {
 }
 audio.addEventListener('loadedmetadata',()=>{if(!active)return;audio.currentTime=Math.min(active.resume||0,Number.isFinite(audio.duration)?audio.duration:active.resume||0);active.ready=true;active.resume=0;renderPlayer();});
 audio.addEventListener('timeupdate',()=>{if(timeNode)timeNode.textContent=clock(audio.currentTime);if(seekNode)seekNode.value=String(audio.currentTime);if(active?.ready&&!audio.paused&&Date.now()-lastSave>10000){lastSave=Date.now();run(checkpoint);}});
-audio.addEventListener('play',()=>{if(active?.blocked){audio.pause();return;}if(playNode){playNode.textContent='Ⅱ';playNode.setAttribute('aria-label','Pause');}});
+audio.addEventListener('play',()=>{if(playbackLocked()||active?.blocked){audio.pause();return;}if(playNode){playNode.textContent='Ⅱ';playNode.setAttribute('aria-label','Pause');}});
 audio.addEventListener('pause',()=>{if(playNode){playNode.textContent='▶';playNode.setAttribute('aria-label','Play');}run(checkpoint);});
 audio.addEventListener('ended',()=>run(async()=>{if(!active)return;if(active.index+1<active.streams.length)await changeTrack(active.index+1,0);else{active.finished=true;await checkpoint();notice('You’ve finished this audiobook.');render();}}));
 audio.addEventListener('error',()=>{if(active)notice('The audio stream could not be opened. Open the book again to refresh its stream.',true);});
 document.getElementById('close-details').addEventListener('click',()=>{detailGeneration++;dialog.close();});
 dialog.addEventListener('click',event=>{if(event.target===dialog){detailGeneration++;dialog.close();}});
-run(async()=>{state=await api.state();render();});
+api.onUpdateStatus?.(updateStatus);
+run(async()=>{const revision=updateRevision;const [next,info]=await Promise.all([api.state(),api.desktopInfo?.().catch(()=>null)]);state=next;if(info){desktop={...desktop,...info,updates:revision===updateRevision?info.updates:desktop.updates};}applyAccent(desktop.accent);render();});
 
 api.onBeforeClose?.(()=>{if(closing)return;closing=true;audio.pause();checkpoint().finally(()=>api.close());});

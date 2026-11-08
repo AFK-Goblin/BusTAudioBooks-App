@@ -1,14 +1,16 @@
 # BusTAudio for Windows
 
-A portable Windows x64 app for the same BusTAudio audiobook catalogue, with invite-only personal accounts. Each account keeps its own saved books, listening progress, bookmarks and finished books. The first release streams audio; it does not download books for offline playback.
+A Windows x64 app for the same BusTAudio audiobook catalogue, with invite-only personal accounts. Each account keeps its own saved books, listening progress, bookmarks and finished books. Windows streams audio; it does not download books for offline playback.
 
 ## Run the Windows app
 
-1. Extract **all** files from `build/BusTAudio-1.0.0-windows-x64.zip` into a folder you control.
-2. Open `BusTAudio-win32-x64/BusTAudio.exe`. Keep the adjacent files and folders with it.
-3. Paste your existing secure BusTAudio install link. Use the same server as your Android app.
-4. Choose **Create account**, enter the invitation issued by the server owner, and enter its assigned username and choose your own password. Existing users choose **Sign in**.
-5. Search the catalogue, open a book and save it or start listening. The player supports parts, playback speed, seeking, skip controls and bookmarks.
+1. Close the old portable app and run **build/BusTAudio-Setup-1.1.0-x64.exe** once.
+2. Open **BusTAudio** from the Start menu. Use this installed copy going forward.
+3. Existing app data is retained under the same Windows user: package name and product name are unchanged. New installs ask for your secure BusTAudio install link and personal account.
+4. Choose your accent in **Settings → Appearance**. The library highlights your most recently listened book; long player titles expand on hover or keyboard focus.
+5. Once the Windows release feed is published, updates check at startup and every six hours, download in the background, and offer **Restart to update**. Settings also provides a manual check and retry. Restart saves your place first and stops if library changes need review. Updates never install automatically on quit.
+
+The optional portable ZIP, **build/BusTAudio-1.1.0-windows-x64.zip**, still works after extracting all files, but does not update itself. Appearance is stored per computer and survives account sign-out.
 
 This build is unsigned. Windows may show an unknown publisher prompt. A Windows signing certificate was not supplied. It is built on Linux and still needs a native Windows playback and credential-storage check before wider distribution.
 
@@ -33,7 +35,7 @@ npm test
 npm start
 ```
 
-The app pins Electron 45.2.3, `@electron/packager` 20.3.0 and Playwright 1.65.0. Development-only `glob` and `minimatch` overrides avoid the advisories in the packager's transitive dependency ranges. No npm packages are needed by the packaged application at runtime.
+The app pins Electron 45.2.3, `@electron/packager` 20.3.0 and Playwright 1.65.0. Development-only `glob` and `minimatch` overrides avoid the advisories in the packager's transitive dependency ranges. The packaged app includes electron-updater and its production dependencies.
 
 Renderer smoke testing:
 
@@ -44,13 +46,26 @@ npm run test:ui
 
 On a host with an existing compatible Chromium build, set `CHROMIUM_PATH` to the browser executable. Linux needs the shared libraries listed by Playwright. The smoke harness injects its fixture bridge into the test browser only; no test switch or fake account is included in the app.
 
-Build the portable Windows x64 bundle on Windows, macOS or Linux:
+Build the Windows installer on Windows (the release workflow uses Windows):
 
 ```sh
 npm run build:win
 ```
 
-The build uses Electron Packager's JavaScript Windows resource editor and a streaming ZIP writer, so it does not require Wine, Python or a system ZIP command. Output: `build/BusTAudio-1.0.0-windows-x64.zip`. The build directory and dependencies are ignored by Git. Rebuild after source changes.
+Output: `build/BusTAudio-Setup-1.1.0-x64.exe`, its blockmap, and `build/latest.yml`. Electron Builder creates an NSIS installer. A native Windows build is the reproducible release path; this ARM Linux workspace cross-builds NSIS under QEMU and uses electron-builder's own UninstallerReader to extract the uninstaller without Wine. The local adapter lives in `/tmp/bustaudio-nsis/build.cjs` and is not needed by Windows CI.
+
+Use `npm run build:portable` for a portable ZIP on Windows, macOS or Linux. This uses Electron Packager and a streaming ZIP writer. The build directory and dependencies are ignored by Git. Rebuild after source changes.
+
+## Publishing automatic updates
+
+The app's update feed is the public GitHub release **desktop-stable**, separate from Android APK releases. Only app binaries and public release metadata go there; no library credentials or account data are included.
+
+1. Push the reviewed source and workflow to the repository. Increment `desktop/package.json` and its lockfile for every new Windows release; update `RELEASE-NOTES.md`.
+2. Run the **Windows release** GitHub Actions workflow on that commit. It runs unit/browser checks, builds on Windows, and creates a **draft** tagged `desktop-vVERSION` with installer, blockmap and metadata.
+3. Test installation on Windows, retained login/library, playback, and an actual older-to-newer update. Review the draft and publish it.
+4. The publish event verifies manifest version, asset name, installer SHA-512/size and rollback protection, then uploads the installer/blockmap to **desktop-stable** before replacing `latest.yml`. Retain previous installer assets for differential downloads. This promotion must finish before installed apps can see the update.
+
+No live Windows release has been published from this workspace yet; GitHub write access is required. A local installer build alone does not make the update feed live. Distribution remains unsigned; HTTPS and release checksums protect transfer integrity, but they do not replace a publisher signing identity.
 
 ## Security and verification
 

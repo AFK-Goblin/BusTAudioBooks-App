@@ -3,6 +3,11 @@ const {app,BrowserWindow,ipcMain,safeStorage,dialog,session}=require('electron')
 const fs=require('node:fs');const path=require('node:path');const {pathToFileURL}=require('node:url');
 const {parseInstallLink,httpsUrl,sanitizeBook,parseBackup,trustedSender,LibrarySession}=require('./core.cjs');
 let allowClose=false,closeRequested=false;let win,vault={},library,importDraft=null,epoch=0,authBusy=false;const requests=new Set();
+const {createUpdates}=require('./updates.cjs');
+const ACCENTS=new Set(['violet','blue','teal','orange','pink']);
+let updates,desktopSettings={accent:'violet'};
+function settingsPath(){return path.join(app.getPath('userData'),'desktop-settings.json');}
+function saveAccent(value){if(!ACCENTS.has(value))throw Error('Choose an available accent.');const next={accent:value};fs.mkdirSync(path.dirname(settingsPath()),{recursive:true});fs.writeFileSync(settingsPath()+'.tmp',JSON.stringify(next));fs.renameSync(settingsPath()+'.tmp',settingsPath());desktopSettings=next;return value;}
 const uiPath=path.join(__dirname,'ui','index.html');const uiURL=pathToFileURL(uiPath).href;
 function vaultPath(){return path.join(app.getPath('userData'),'private-library.enc');}
 function writeVault(){if(!safeStorage.isEncryptionAvailable()||safeStorage.getSelectedStorageBackend?.()==='basic_text')throw Error('Windows credential protection is unavailable. Please restart the app.');
@@ -28,6 +33,10 @@ async function authenticate(form,register){if(authBusy)throw Error('Sign-in is a
  const result=await request('/app/accounts/'+(register?'register':'login'),{method:'POST',body,token:null});if(current!==epoch)throw Error('Sign-in was cancelled.');
  vault.auth=result;library.bind(result.user);writeVault();try{await library.refresh();}catch{}return state();}finally{authBusy=false;}}
 const handlers={
+ desktopInfo:()=>({version:app.getVersion(),accent:desktopSettings.accent,updates:updates.snapshot()}),
+ setAccent:value=>saveAccent(value),
+ checkForUpdates:()=>updates.check(),
+ installUpdate:()=>updates.install(),
  close:()=>{allowClose=true;win.close();return true;},
  state:()=>state(),
  configure:async value=>{if(vault.auth||authBusy)throw Error('Sign out before changing your server.');const prefix=parseInstallLink(value);await request('/health',{prefix,token:null});vault={prefix};epoch++;writeVault();return state();},
@@ -46,13 +55,18 @@ const handlers={
  for(const book of draft){if(current!==epoch)throw Error('Your account changed.');if(library.records.has(book.id)){library.recoveries.set(book.id,{id:book.id,book,deleted:false,reason:'import'});library.stash();review++;}else{try{const result=await library.save(book);result.conflict?review++:added++;}catch(e){if(e.status===401||current!==epoch)throw e;review++;}}}return {...state(),imported:{added,review}};}
 };
 app.whenReady().then(async()=>{
- try{vault=readVault();library=new LibrarySession({request,persist:cache=>{vault.cache=cache;writeVault();}});if(vault.auth&&vault.cache?.user?.id===vault.auth.user.id)library.bind(vault.auth.user,vault.cache.records,vault.cache.recoveries);else if(vault.auth)library.bind(vault.auth.user);
+ try{try{const settings=JSON.parse(fs.readFileSync(settingsPath(),'utf8'));if(ACCENTS.has(settings.accent))desktopSettings={accent:settings.accent};}catch{/* Use the default appearance when no settings exist. */}
+ vault=readVault();library=new LibrarySession({request,persist:cache=>{vault.cache=cache;writeVault();}});if(vault.auth&&vault.cache?.user?.id===vault.auth.user.id)library.bind(vault.auth.user,vault.cache.records,vault.cache.recoveries);else if(vault.auth)library.bind(vault.auth.user);
  session.defaultSession.setPermissionRequestHandler((_w,_p,cb)=>cb(false));session.defaultSession.setPermissionCheckHandler(()=>false);
- win=new BrowserWindow({width:1280,height:860,minWidth:920,minHeight:660,backgroundColor:'#111316',title:'BusTAudio',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,webviewTag:false,spellcheck:false}});
+ win=new BrowserWindow({width:1280,height:860,minWidth:920,minHeight:660,backgroundColor:'#15101c',title:'BusTAudio',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,webviewTag:false,spellcheck:false}});
+ const installed=app.isPackaged&&process.platform==='win32'&&fs.existsSync(path.join(process.resourcesPath,'installed-release'));
+ const autoUpdater=installed?require('electron-updater').autoUpdater:null;
+ updates=createUpdates({updater:autoUpdater,enabled:installed,version:app.getVersion(),onStatus:value=>{if(value.status==='error')allowClose=false;if(win&&!win.isDestroyed())win.webContents.send('bustaudio:update-status',value);},canInstall:()=>!authBusy&&library.recoveries.size===0,install:()=>{allowClose=true;autoUpdater.quitAndInstall(false,true);}});
  win.on('close',event=>{if(allowClose)return;event.preventDefault();if(closeRequested)return;closeRequested=true;win.webContents.send('bustaudio:before-close');setTimeout(()=>{allowClose=true;win.close();},12000).unref();});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());win.webContents.on('will-attach-webview',e=>e.preventDefault());
  for(const [name,handler]of Object.entries(handlers))ipcMain.handle('bustaudio:'+name,async(event,payload)=>{if(!trustedSender(event,win.webContents,uiURL))return {ok:false,error:'This request is not allowed.'};try{return {ok:true,value:await handler(payload)};}catch(e){return {ok:false,error:e.message||'Something went wrong.',status:e.status||null};}});
  await win.loadFile(uiPath);
+ if(installed){setTimeout(()=>updates.check(),15000).unref();setInterval(()=>updates.check(),6*60*60*1000).unref();}
  }catch(e){dialog.showErrorBox('BusTAudio could not start',e.message);app.quit();}
 });
 app.on('window-all-closed',()=>app.quit());

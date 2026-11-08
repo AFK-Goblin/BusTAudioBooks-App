@@ -5,7 +5,7 @@ const OWNER = 'bustaudio_account_owner_v1';
 const BASELINES = 'bustaudio_account_baselines_v1';
 function countBooks(library) {
   const books = Object.values(library).filter(book => book && typeof book === 'object');
-  return { total: books.length, inProgress: books.filter(book => book.progress?.position > 5 && !book.progress?.finished).length, finished: books.filter(book => book.progress?.finished).length };
+  return { total: books.length, inProgress: books.filter(book => (book.progress?.position > 5 || book.progress?.trackIndex > 0) && !book.progress?.finished).length, finished: books.filter(book => book.progress?.finished).length };
 }
 const changed = () => new Error('Account or server changed. Sign in again before syncing.');
 

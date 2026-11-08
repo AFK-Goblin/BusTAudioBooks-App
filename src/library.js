@@ -262,7 +262,7 @@ export async function listBooks() {
 /** @param {any[]} books */
 function inProgress(books) {
   return books
-    .filter((b) => b.progress && b.progress.position > 5 && !b.progress.finished)
+    .filter((b) => isStarted(b) && !b.progress.finished)
     .sort((a, b) => (b.progress.lastPlayed || 0) - (a.progress.lastPlayed || 0));
 }
 /** @param {any[]} books */

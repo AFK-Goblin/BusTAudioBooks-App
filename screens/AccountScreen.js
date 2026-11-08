@@ -34,7 +34,7 @@ export default function AccountScreen({ nav }) {
     const result = await accountBridge.sync();
     setConflicts(result.conflicts); setNotices(result.notices); setSummary(result.summary || null);
     if (result.summary) setAccount(value => ({ ...value, phoneLibrary: result.summary.phone }));
-    setMessage(result.conflicts.length ? 'Choose which version to keep for the books below.' : 'Sync complete. Refresh your Windows library to load these books.');
+    setMessage(result.conflicts.length ? 'Choose which version to keep for the books below.' : 'Sync complete. This phone has received your account’s updates and sent its changes. Refresh your Windows library when switching back to your computer.');
   }
   function link() {
     Alert.alert('Link this phone library?', `Add this phone’s books and listening history to ${account.user.username}’s private library? This phone stays linked to that account. Playback will close so your place can sync safely.`, [
@@ -53,7 +53,7 @@ export default function AccountScreen({ nav }) {
         {account.server && <Text style={styles.help}>Server: {account.server}</Text>}
         {account.phoneLibrary && <Text style={styles.help}>On this phone: {counts(account.phoneLibrary)}</Text>}
         {summary && <Text style={styles.help}>Confirmed in your account: {counts(summary.cloud)}</Text>}
-        <Text style={styles.help}>{account.linked ? 'Sync is manual. Sync before switching between your phone and computer. Sync closes playback and saves your current place. Audio downloads stay on this device.' : 'Signing in does not upload this phone’s library. Link it only if these books and listening history belong to you.'}</Text>
+        <Text style={styles.help}>{account.linked ? 'Sync now sends this phone’s changes and receives books and progress from your account. Pause on Windows, then sync here before listening on your phone. Sync here again before switching back to Windows. Sync closes phone playback and saves your current place. Audio downloads stay on this device.' : 'Signing in does not upload this phone’s library. Link it only if these books and listening history belong to you.'}</Text>
         {button(account.linked ? 'Sync now' : 'Link and sync this phone', account.linked ? () => run(sync) : link, true)}
         <Text style={styles.help}>Signing out keeps your local books on this phone. Only the linked account can sync them again. Switching this phone library to another owner is not supported.</Text>
         {button('Sign out', () => run(async () => { await accountBridge.signOut(); setSummary(null); setAccount(await accountBridge.status()); setConflicts([]); setNotices([]); setMessage('Signed out. Your local books remain on this phone.'); }))}

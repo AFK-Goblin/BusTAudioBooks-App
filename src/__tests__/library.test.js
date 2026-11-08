@@ -8,6 +8,18 @@ import {
 
 beforeEach(() => AsyncStorage.clear());
 
+test('listening shelves include later parts but exclude finished and unstarted books', async () => {
+  await upsertBook({ id: 'later', progress: { trackIndex: 2, position: 0, lastPlayed: 30 } });
+  await upsertBook({ id: 'first', progress: { trackIndex: 0, position: 60, lastPlayed: 20 } });
+  await upsertBook({ id: 'done', progress: { trackIndex: 2, position: 0, finished: true, lastPlayed: 40 } });
+  await upsertBook({ id: 'new', saved: true, progress: { trackIndex: 0, position: 0 } });
+  await upsertBook({ id: 'empty', progress: {} });
+  const sections = await librarySections();
+  expect(sections.continueListening.map(b => b.id)).toEqual(['later', 'first']);
+  expect(sections.finished.map(b => b.id)).toEqual(['done']);
+  expect(sections.wantToListen.map(b => b.id)).toEqual(['new']);
+});
+
 test("checkpoints learn each part's duration without forgetting earlier parts", async () => {
   await upsertBook({ id: "b", title: "Book", files: [{}, {}, {}] });
   await checkpointAudiobookProgress("b", { trackIndex: 0, position: 10, duration: 600, finished: false });

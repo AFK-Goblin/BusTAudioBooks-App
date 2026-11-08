@@ -1,7 +1,7 @@
 /* global test, beforeEach */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAccountBridge } from '../bridge';
-import { getLibrary, getBook, upsertBook, applyAccountBook } from '../../library';
+import { getLibrary, getBook, upsertBook, applyAccountBook, continueListening, librarySections } from '../../library';
 
 const book = { id: 'b', title: 'Book', progress: { position: 10 } };
 let bridge, records, puts, prefix, secure, pending, currentUser, hangLogout, logoutAborted, hangBody, onClose, rejectId, omitFromReads, onLibraryRead;
@@ -33,6 +33,23 @@ beforeEach(async () => {
 });
 async function login() { await bridge.authenticate('login', { username: currentUser, password: 'password12345' }); }
 async function linked() { await login(); await bridge.linkPhone(); }
+
+test.each([0, 3, 5])('syncing a later part at %s seconds keeps the book in listening lists', async position => {
+  await upsertBook({ ...book, saved: true, files: [{ uri: 'file:///book.mp3' }] });
+  await linked(); await bridge.sync();
+  records.b = { id: 'b', revision: 2, deleted: false, book: {
+    ...book, saved: true, progress: { trackIndex: 4, position, lastPlayed: 1000, finished: false },
+  } };
+  const result = await bridge.sync();
+  expect(result.conflicts).toEqual([]);
+  expect(await getBook('b')).toMatchObject({ files: [{ uri: 'file:///book.mp3' }], progress: { trackIndex: 4, position } });
+  expect((await continueListening()).map(b => b.id)).toEqual(['b']);
+  const sections = await librarySections();
+  expect(sections.continueListening.map(b => b.id)).toEqual(['b']);
+  expect(sections.wantToListen).toEqual([]);
+  expect(result.summary.phone.inProgress).toBe(1);
+  expect(result.summary.cloud.inProgress).toBe(1);
+});
 
 test('sign in never imports or uploads the existing phone library', async () => {
   await upsertBook(book); await login();

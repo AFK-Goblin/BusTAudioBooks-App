@@ -7,6 +7,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.util.SizeF
 import android.widget.RemoteViews
 import androidx.media3.common.Player
 import com.bustaudio.app.R
@@ -58,6 +61,10 @@ class ListeningWidgetProvider : AppWidgetProvider() {
         WidgetArtwork.clear(context)
     }
 
+    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) {
+        render(context)
+    }
+
     companion object {
         const val SNAPSHOT = "com.bustaudio.app.WIDGET_SNAPSHOT"
         private const val PREFS = "bustaudio_widget_display"
@@ -100,7 +107,31 @@ class ListeningWidgetProvider : AppWidgetProvider() {
         fun render(context: Context, state: WidgetState = load(context)) {
             val widgetIds = ids(context)
             if (widgetIds.isEmpty()) return
-            val views = RemoteViews(context.packageName, R.layout.bustaudio_listening_widget)
+            val manager = AppWidgetManager.getInstance(context)
+            val compact = createViews(context, state, R.layout.bustaudio_listening_widget_compact)
+            val wide = createViews(context, state, R.layout.bustaudio_listening_widget)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // The launcher selects independently for each instance and orientation.
+                manager.updateAppWidget(widgetIds, RemoteViews(mapOf(
+                    SizeF(110f, 148f) to compact,
+                    SizeF(250f, 148f) to wide,
+                )))
+            } else {
+                for (id in widgetIds) {
+                    val options = manager.getAppWidgetOptions(id)
+                    val portraitWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
+                    val landscapeWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, portraitWidth)
+                    manager.updateAppWidget(id, RemoteViews(
+                        if (landscapeWidth >= 250) wide else compact,
+                        if (portraitWidth >= 250) wide else compact,
+                    ))
+                }
+            }
+            WidgetArtwork.fetch(context.applicationContext, state.artwork)
+        }
+
+        private fun createViews(context: Context, state: WidgetState, layout: Int): RemoteViews {
+            val views = RemoteViews(context.packageName, layout)
             val title = state.title.ifBlank { "BusTAudio" }
             views.setTextViewText(R.id.widget_title, title)
             views.setTextViewText(R.id.widget_chapter, when {
@@ -134,8 +165,7 @@ class ListeningWidgetProvider : AppWidgetProvider() {
             val art = WidgetArtwork.cached(context, state.artwork)
             if (art != null) views.setImageViewBitmap(R.id.widget_cover, art)
             else views.setImageViewResource(R.id.widget_cover, R.drawable.bustaudio_widget_book)
-            AppWidgetManager.getInstance(context).updateAppWidget(widgetIds, views)
-            WidgetArtwork.fetch(context.applicationContext, state.artwork)
+            return views
         }
     }
 }

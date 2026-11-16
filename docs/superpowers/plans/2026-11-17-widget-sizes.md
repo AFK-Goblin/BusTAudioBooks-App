@@ -23,3 +23,5 @@ Independent review found a dense-grid issue: row selected square at232×50dp and
 Earlier 2×3-only build 40793b6a-92d2-4699-beb8-cda4a51496ea is FINISHED (3.3.1/code7) and superseded by this expanded3.3.2/code8 release.
 
 Follow-up review identified row visibility reapplication: Android can reuse a row view after resizing. The renderer now explicitly sets both visible/hidden outcomes for cover and chapter on every render so stale visibility cannot survive narrowing/widening or shortening/tallening.
+
+Delivery status: source commits ded9cbb and 92163d4 complete. Final native API compile and Expo prebuild pass after the visibility fix. APK submission was rejected before execution by automatic approval review: source upload to Expo and use of Android signing credentials require explicit authorization. No 3.3.2 APK was produced. Pending concrete action: `eas build --platform android --profile preview-widget --non-interactive --no-wait --json`, then inspect release unit-test logs, download APK, verify signature against the existing certificate, and run the prepared five-preset APK verifier. Do not bypass the rejection. Await user approval for upload/signing.

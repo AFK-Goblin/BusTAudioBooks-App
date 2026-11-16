@@ -127,8 +127,8 @@ open class ListeningWidgetProvider : AppWidgetProvider() {
                     }
                     return createViews(context, state, layout).apply {
                         if (layout == R.layout.bustaudio_listening_widget_row) {
-                            if (height >= 64) setViewVisibility(R.id.widget_chapter, View.VISIBLE)
-                            if (width in 1..229) setViewVisibility(R.id.widget_cover, View.GONE)
+                            setViewVisibility(R.id.widget_chapter, if (height >= 64) View.VISIBLE else View.GONE)
+                            setViewVisibility(R.id.widget_cover, if (width in 1..229) View.GONE else View.VISIBLE)
                         }
                     }
                 }

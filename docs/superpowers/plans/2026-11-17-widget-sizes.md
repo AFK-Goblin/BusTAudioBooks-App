@@ -21,3 +21,5 @@ Verification before signing: 355 Jest tests / 49 suites passed; 16 native JUnit 
 Independent review found a dense-grid issue: row selected square at232×50dp and required250dp width. Regression reproduced then passed after row minimum/selection width dropped to200dp; covers are hidden below230dp in the bar to leave title room. Important lifecycle/snapshot/rotation checks passed source review. No physical launcher, accessibility or in-place installation validation available here.
 
 Earlier 2×3-only build 40793b6a-92d2-4699-beb8-cda4a51496ea is FINISHED (3.3.1/code7) and superseded by this expanded3.3.2/code8 release.
+
+Follow-up review identified row visibility reapplication: Android can reuse a row view after resizing. The renderer now explicitly sets both visible/hidden outcomes for cover and chapter on every render so stale visibility cannot survive narrowing/widening or shortening/tallening.

@@ -193,3 +193,15 @@ Lint currently reports the existing warning backlog but must have zero errors.
 - **BusTAudio backend / Stremio addon** — the server this app talks to; it
   generates the install link on its `/configure` page and serves the `/app` API.
   https://github.com/AFK-Goblin/BusTAudioBooks
+
+## Android home-screen widget (3.3.0)
+
+The native widget shows the current audiobook, chapter, current-part progress and playback controls in the app's plum theme. It uses the same player as the notification and respects the skip intervals in Settings. Titles use two lines; tap the book to open BusTAudio.
+
+This feature requires installing the signed 3.3.0 APK over the existing app; it cannot arrive through the 3.2.0 Expo update channel. Keep the same package/signing key to preserve local data. After installation, long-press an empty home-screen area, choose Widgets, find BusTAudioBooks and drag the listening widget onto the screen. It can be resized.
+
+When Android has fully stopped the player, a control opens the app to restore playback safely. The widget does not recreate a queue or overwrite progress from its cached display. While the existing player is running, controls work without navigating the app.
+
+Build verification: npx eas-cli build --platform android --profile preview-widget runs native unit tests before assembling the APK. Local native policy tests can also run with node scripts/test-widget-policy.cjs (requires Java, kotlinc, JUNIT_JAR and HAMCREST_JAR). The widget plugin copies tracked Kotlin/XML/tests during Expo prebuild.
+
+Current delivery status: implementation locally tested; signed APK cloud submission awaits explicit source-upload/signing approval. Launcher rendering, actual taps and signed upgrade still require Android device validation.

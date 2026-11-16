@@ -1,8 +1,7 @@
 diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
-index 9120777..7537651 100644
 --- a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
 +++ b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
-@@ -35,8 +35,11 @@ import androidx.media3.exoplayer.ExoPlayer
+@@ -35,8 +35,11 @@
  import androidx.media3.exoplayer.hls.offline.HlsDownloader
  import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
  import androidx.media3.exoplayer.source.MediaSource
@@ -14,10 +13,10 @@ index 9120777..7537651 100644
  import androidx.media3.session.LibraryResult
  import androidx.media3.session.MediaLibraryService
  import androidx.media3.session.MediaSession
-@@ -111,6 +114,11 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+@@ -111,6 +114,11 @@
      )
      val upstreamFactory: DataSource.Factory = DefaultDataSource.Factory(this, httpFactory)
- 
+
 +    // Raw AAC (including files mislabeled .mp4) has no seek index. For known-size
 +    // files, estimate duration and seek positions from the average ADTS frame size.
 +    val extractorsFactory = DefaultExtractorsFactory()
@@ -26,7 +25,7 @@ index 9120777..7537651 100644
      val mediaSourceFactory: MediaSource.Factory = config.cacheMaxSizeBytes?.let { maxBytes ->
        val cacheDir = File(cacheDir, "trackplayer_cache")
        val evictor = LeastRecentlyUsedCacheEvictor(maxBytes)
-@@ -124,10 +132,10 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+@@ -124,10 +132,10 @@
        // the LRU); non-live tracks read/write through it. When caching is off,
        // every track uses the bare upstream factory and no routing is needed.
        LivenessRoutingMediaSourceFactory(
@@ -37,13 +36,24 @@ index 9120777..7537651 100644
        )
 -    } ?: DefaultMediaSourceFactory(upstreamFactory)
 +    } ?: DefaultMediaSourceFactory(upstreamFactory, extractorsFactory)
- 
+
      val built = ExoPlayer.Builder(this)
        .setMediaSourceFactory(LiveRefreshMediaSourceFactory(mediaSourceFactory))
-@@ -231,7 +239,25 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
+@@ -192,6 +200,10 @@
+     controller.onStateChanged = { persistSleepTimerState() }
+
+     activePlayer.addListener(object : Player.Listener {
++      override fun onEvents(player: Player, events: Player.Events) {
++        publishListeningWidget(player)
++      }
++
+       override fun onIsPlayingChanged(isPlaying: Boolean) {
+         if (isPlaying) startProgressSyncTimer() else stopProgressSyncTimer(fireFinalTick = true)
+       }
+@@ -231,7 +243,25 @@
        )
      }
- 
+
 +    val rewindButton = CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
 +      .setPlayerCommand(Player.COMMAND_SEEK_BACK)
 +      .setDisplayName("Rewind")
@@ -65,4 +75,53 @@ index 9120777..7537651 100644
 +      .setMediaButtonPreferences(ImmutableList.of(rewindButton, forwardButton))
        .apply { sessionActivity?.let { setSessionActivity(it) } }
        .build()
- 
+
+@@ -356,6 +386,7 @@
+   }
+
+   override fun onDestroy() {
++    publishListeningWidget(null)
+     mediaSession?.run {
+       player.release()
+       release()
+@@ -843,6 +874,32 @@
+
+   // endregion
+
++  // Snapshot-only integration. The widget controls this same MediaSession and
++  // never owns a queue, saved playback position, or account credentials.
++  private fun publishListeningWidget(player: Player?) {
++    val component = android.content.ComponentName(packageName,
++      "com.bustaudio.app.widget.ListeningWidgetProvider")
++    if (android.appwidget.AppWidgetManager.getInstance(this).getAppWidgetIds(component).isEmpty()) return
++    val item = player?.currentMediaItem
++    val metadata = player?.mediaMetadata
++    sendBroadcast(Intent("com.bustaudio.app.WIDGET_SNAPSHOT").apply {
++      setComponent(component)
++      putExtra("available", item != null)
++      putExtra("clear", player != null && item == null)
++      if (player != null && item != null) {
++        putExtra("mediaId", item.mediaId)
++        putExtra("title", metadata?.albumTitle?.toString() ?: metadata?.title?.toString() ?: "BusTAudio")
++        putExtra("chapter", metadata?.title?.toString() ?: "")
++        putExtra("artwork", metadata?.artworkUri?.toString() ?: "")
++        putExtra("position", player.currentPosition.coerceAtLeast(0))
++        putExtra("duration", player.duration.coerceAtLeast(0))
++        putExtra("playing", player.playWhenReady && player.playbackState != Player.STATE_ENDED)
++        putExtra("backward", (player.seekBackIncrement / 1000).toInt())
++        putExtra("forward", (player.seekForwardIncrement / 1000).toInt())
++      }
++    })
++  }
++
+   // region Progress Sync
+
+   private fun startProgressSyncTimer() {
+@@ -873,6 +930,7 @@
+
+   private fun onProgressSyncTick() {
+     val player = activePlayer ?: return
++    publishListeningWidget(player)
+     val mediaItem = player.currentMediaItem ?: return
+     val mediaId = mediaItem.mediaId
+     val position = player.currentPosition / 1000.0

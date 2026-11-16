@@ -23,7 +23,7 @@ describe('listening widget Expo integration', () => {
     expect(app.activity).toContainEqual(existingActivity);
     expect(app.receiver).toContainEqual(existingReceiver);
     expect(app.receiver).toContainEqual({
-      $: { 'android:name': 'com.bustaudio.app.widget.ListeningWidgetProvider', 'android:exported': 'false' },
+      $: { 'android:name': 'com.bustaudio.app.widget.ListeningWidgetProvider', 'android:exported': 'false', 'android:label': '@string/bustaudio_widget_name_compact' },
       'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
       'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/bustaudio_listening_widget' } }],
     });
@@ -37,12 +37,34 @@ describe('listening widget Expo integration', () => {
     expect(await applyMod('manifest', result)).toEqual(snapshot);
   });
 
+  it('registers all five picker presets with their own sizes and preserves them on regeneration', async () => {
+    const result = await applyMod('manifest', { manifest: { application: [{ $: { 'android:name': '.MainApplication' } }] } });
+    const receivers = result.manifest.application[0].receiver;
+    const presets = [
+      ['ListeningWidgetProvider', 'bustaudio_listening_widget', 'compact'],
+      ['ColumnWidgetProvider', 'bustaudio_widget_column', 'column'],
+      ['RowWidgetProvider', 'bustaudio_widget_row', 'row'],
+      ['SquareWidgetProvider', 'bustaudio_widget_square', 'square'],
+      ['WideWidgetProvider', 'bustaudio_widget_wide', 'wide'],
+    ];
+    expect(receivers).toHaveLength(5);
+    for (const [name, resource, label] of presets) {
+      const receiver = receivers.find(entry => entry.$['android:name'] === 'com.bustaudio.app.widget.' + name);
+      expect(receiver).toBeDefined();
+      expect(receiver.$['android:exported']).toBe('false');
+      expect(receiver.$['android:label']).toBe('@string/bustaudio_widget_name_' + label);
+      expect(receiver['meta-data']).toContainEqual({ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/' + resource } });
+    }
+    const snapshot = JSON.parse(JSON.stringify(result));
+    expect(await applyMod('manifest', result)).toEqual(snapshot);
+  });
+
   it('repairs old widget declarations and removes duplicates on generation', async () => {
     const staleReceiver = { $: { 'android:name': 'com.bustaudio.app.widget.ListeningWidgetProvider', 'android:exported': 'true' } };
     const staleActivity = { $: { 'android:name': 'com.bustaudio.app.widget.WidgetControlActivity', 'android:exported': 'true' } };
     const result = await applyMod('manifest', { manifest: { application: [{ $: { 'android:name': '.MainApplication' }, receiver: [staleReceiver, staleReceiver], activity: [staleActivity, staleActivity] }] } });
     const app = result.manifest.application[0];
-    expect(app.receiver).toHaveLength(1);
+    expect(app.receiver).toHaveLength(5);
     expect(app.activity).toHaveLength(1);
     expect(app.receiver[0].$['android:exported']).toBe('false');
     expect(app.activity[0].$['android:exported']).toBe('false');

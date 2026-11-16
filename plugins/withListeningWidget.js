@@ -7,7 +7,13 @@ const {
   withDangerousMod,
 } = require("expo/config-plugins");
 
-const PROVIDER = "com.bustaudio.app.widget.ListeningWidgetProvider";
+const PRESETS = [
+  ["ListeningWidgetProvider", "bustaudio_listening_widget", "compact"],
+  ["ColumnWidgetProvider", "bustaudio_widget_column", "column"],
+  ["RowWidgetProvider", "bustaudio_widget_row", "row"],
+  ["SquareWidgetProvider", "bustaudio_widget_square", "square"],
+  ["WideWidgetProvider", "bustaudio_widget_wide", "wide"],
+].map(([name, resource, label]) => ({ name: "com.bustaudio.app.widget." + name, resource, label }));
 const CONTROL_ACTIVITY = "com.bustaudio.app.widget.WidgetControlActivity";
 const DEPENDENCIES = [
   ["implementation", "androidx.media3:media3-session:1.9.2"],
@@ -18,14 +24,14 @@ const DEPENDENCIES = [
 module.exports = function withListeningWidget(config) {
   config = withAndroidManifest(config, (cfg) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
-    app.receiver = (app.receiver || []).filter((entry) => entry.$["android:name"] !== PROVIDER);
-    app.receiver.push({
-      $: { "android:name": PROVIDER, "android:exported": "false" },
+    app.receiver = (app.receiver || []).filter((entry) => !PRESETS.some(preset => preset.name === entry.$["android:name"]));
+    for (const preset of PRESETS) app.receiver.push({
+      $: { "android:name": preset.name, "android:exported": "false", "android:label": "@string/bustaudio_widget_name_" + preset.label },
       "intent-filter": [{
         action: [{ $: { "android:name": "android.appwidget.action.APPWIDGET_UPDATE" } }],
       }],
       "meta-data": [{
-        $: { "android:name": "android.appwidget.provider", "android:resource": "@xml/bustaudio_listening_widget" },
+        $: { "android:name": "android.appwidget.provider", "android:resource": "@xml/" + preset.resource },
       }],
     });
     app.activity = (app.activity || []).filter((entry) => entry.$["android:name"] !== CONTROL_ACTIVITY);

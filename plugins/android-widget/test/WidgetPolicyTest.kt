@@ -5,6 +5,25 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class WidgetPolicyTest {
+    @Test fun layoutsKeepControlsUsableInNarrowAndShortSpaces() {
+        val cases = listOf(
+            Triple(57, 455, "column"), Triple(100, 260, "column"),
+            Triple(276, 102, "row"), Triple(554, 51, "row"),
+            Triple(232, 50, "row"), Triple(200, 40, "row"),
+            Triple(130, 150, "square"), Triple(180, 170, "square"),
+            Triple(130, 337, "compact"), Triple(200, 400, "compact"),
+            Triple(276, 220, "wide"), Triple(554, 184, "wide"),
+            Triple(250, 500, "wide"),
+        )
+        for ((width, height, expected) in cases)
+            assertEquals("$width x $height", expected, WidgetPolicy.layout(width, height))
+    }
+
+    @Test fun missingLauncherDimensionsUseThePresetInsteadOfGuessing() {
+        for ((width, height) in listOf(0 to 0, 0 to 300, 300 to 0, -1 to 200))
+            assertEquals(null, WidgetPolicy.layout(width, height))
+    }
+
     private val book = WidgetState(mediaId = "book-a", available = true)
 
     @Test fun previousBookPendingIntentCannotBeReusedForAnotherBook() {

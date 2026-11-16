@@ -1,7 +1,8 @@
 diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
+index 9120777..fff29e7 100644
 --- a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
 +++ b/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/trackplayer/TrackPlayerPlaybackService.kt
-@@ -35,8 +35,11 @@
+@@ -35,8 +35,11 @@ import androidx.media3.exoplayer.ExoPlayer
  import androidx.media3.exoplayer.hls.offline.HlsDownloader
  import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
  import androidx.media3.exoplayer.source.MediaSource
@@ -13,7 +14,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
  import androidx.media3.session.LibraryResult
  import androidx.media3.session.MediaLibraryService
  import androidx.media3.session.MediaSession
-@@ -111,6 +114,11 @@
+@@ -111,6 +114,11 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
      )
      val upstreamFactory: DataSource.Factory = DefaultDataSource.Factory(this, httpFactory)
 
@@ -25,7 +26,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
      val mediaSourceFactory: MediaSource.Factory = config.cacheMaxSizeBytes?.let { maxBytes ->
        val cacheDir = File(cacheDir, "trackplayer_cache")
        val evictor = LeastRecentlyUsedCacheEvictor(maxBytes)
-@@ -124,10 +132,10 @@
+@@ -124,10 +132,10 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
        // the LRU); non-live tracks read/write through it. When caching is off,
        // every track uses the bare upstream factory and no routing is needed.
        LivenessRoutingMediaSourceFactory(
@@ -39,7 +40,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
 
      val built = ExoPlayer.Builder(this)
        .setMediaSourceFactory(LiveRefreshMediaSourceFactory(mediaSourceFactory))
-@@ -192,6 +200,10 @@
+@@ -192,6 +200,10 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
      controller.onStateChanged = { persistSleepTimerState() }
 
      activePlayer.addListener(object : Player.Listener {
@@ -50,7 +51,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
        override fun onIsPlayingChanged(isPlaying: Boolean) {
          if (isPlaying) startProgressSyncTimer() else stopProgressSyncTimer(fireFinalTick = true)
        }
-@@ -231,7 +243,25 @@
+@@ -231,7 +243,25 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
        )
      }
 
@@ -76,7 +77,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
        .apply { sessionActivity?.let { setSessionActivity(it) } }
        .build()
 
-@@ -356,6 +386,7 @@
+@@ -356,6 +386,7 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
    }
 
    override fun onDestroy() {
@@ -84,7 +85,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
      mediaSession?.run {
        player.release()
        release()
-@@ -843,6 +874,32 @@
+@@ -843,6 +874,35 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
 
    // endregion
 
@@ -93,7 +94,10 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
 +  private fun publishListeningWidget(player: Player?) {
 +    val component = android.content.ComponentName(packageName,
 +      "com.bustaudio.app.widget.ListeningWidgetProvider")
-+    if (android.appwidget.AppWidgetManager.getInstance(this).getAppWidgetIds(component).isEmpty()) return
++    val widgetManager = android.appwidget.AppWidgetManager.getInstance(this)
++    if (widgetManager.installedProviders.none {
++      it.provider.packageName == packageName && widgetManager.getAppWidgetIds(it.provider).isNotEmpty()
++    }) return
 +    val item = player?.currentMediaItem
 +    val metadata = player?.mediaMetadata
 +    sendBroadcast(Intent("com.bustaudio.app.WIDGET_SNAPSHOT").apply {
@@ -117,7 +121,7 @@ diff --git a/node_modules/@rntp/player/android/src/main/java/com/doublesymmetry/
    // region Progress Sync
 
    private fun startProgressSyncTimer() {
-@@ -873,6 +930,7 @@
+@@ -873,6 +933,7 @@ class TrackPlayerPlaybackService: MediaLibraryService(), MediaLibraryService.Med
 
    private fun onProgressSyncTick() {
      val player = activePlayer ?: return

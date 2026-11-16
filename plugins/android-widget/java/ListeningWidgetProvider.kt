@@ -3,19 +3,19 @@ package com.bustaudio.app.widget
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.SizeF
+import android.view.View
 import android.widget.RemoteViews
 import androidx.media3.common.Player
 import com.bustaudio.app.R
 import org.json.JSONObject
 
-class ListeningWidgetProvider : AppWidgetProvider() {
+open class ListeningWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == SNAPSHOT) {
             if (!hasWidgets(context)) return
@@ -57,6 +57,8 @@ class ListeningWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onDisabled(context: Context) {
+        // Shared state survives removal of the last instance of just one preset.
+        if (hasWidgets(context)) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         WidgetArtwork.clear(context)
     }
@@ -68,8 +70,11 @@ class ListeningWidgetProvider : AppWidgetProvider() {
     companion object {
         const val SNAPSHOT = "com.bustaudio.app.WIDGET_SNAPSHOT"
         private const val PREFS = "bustaudio_widget_display"
-        fun ids(context: Context): IntArray = AppWidgetManager.getInstance(context)
-            .getAppWidgetIds(ComponentName(context, ListeningWidgetProvider::class.java))
+        fun ids(context: Context): IntArray {
+            val manager = AppWidgetManager.getInstance(context)
+            return manager.installedProviders.filter { it.provider.packageName == context.packageName }
+                .flatMap { manager.getAppWidgetIds(it.provider).toList() }.toIntArray()
+        }
         fun hasWidgets(context: Context) = ids(context).isNotEmpty()
 
         fun fromPlayer(player: Player): WidgetState {
@@ -108,24 +113,40 @@ class ListeningWidgetProvider : AppWidgetProvider() {
             val widgetIds = ids(context)
             if (widgetIds.isEmpty()) return
             val manager = AppWidgetManager.getInstance(context)
-            val compact = createViews(context, state, R.layout.bustaudio_listening_widget_compact)
-            val wide = createViews(context, state, R.layout.bustaudio_listening_widget)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // The launcher selects independently for each instance and orientation.
-                manager.updateAppWidget(widgetIds, RemoteViews(mapOf(
-                    SizeF(110f, 148f) to compact,
-                    SizeF(250f, 148f) to wide,
-                )))
-            } else {
-                for (id in widgetIds) {
-                    val options = manager.getAppWidgetOptions(id)
-                    val portraitWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
-                    val landscapeWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, portraitWidth)
-                    manager.updateAppWidget(id, RemoteViews(
-                        if (landscapeWidth >= 250) wide else compact,
-                        if (portraitWidth >= 250) wide else compact,
-                    ))
+            for (id in widgetIds) {
+                val options = manager.getAppWidgetOptions(id)
+                val fallback = manager.getAppWidgetInfo(id)?.initialLayout ?: R.layout.bustaudio_listening_widget_compact
+                fun views(width: Int, height: Int): RemoteViews {
+                    val layout = when (WidgetPolicy.layout(width, height)) {
+                        "column" -> R.layout.bustaudio_listening_widget_column
+                        "row" -> R.layout.bustaudio_listening_widget_row
+                        "square" -> R.layout.bustaudio_listening_widget_square
+                        "compact" -> R.layout.bustaudio_listening_widget_compact
+                        "wide" -> R.layout.bustaudio_listening_widget
+                        else -> fallback
+                    }
+                    return createViews(context, state, layout).apply {
+                        if (layout == R.layout.bustaudio_listening_widget_row) {
+                            if (height >= 64) setViewVisibility(R.id.widget_chapter, View.VISIBLE)
+                            if (width in 1..229) setViewVisibility(R.id.widget_cover, View.GONE)
+                        }
+                    }
                 }
+                @Suppress("DEPRECATION")
+                val sizes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                    options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+                        ?.filter { it.width.isFinite() && it.height.isFinite() && it.width > 0 && it.height > 0 }
+                        ?.distinct()?.take(16) else null
+                val rendered = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !sizes.isNullOrEmpty()) {
+                    // Each size needs fresh views: RemoteViews stores mutable size metadata.
+                    RemoteViews(sizes.associateWith { views(it.width.toInt(), it.height.toInt()) })
+                } else {
+                    RemoteViews(
+                        views(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT)),
+                        views(options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH), options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)),
+                    )
+                }
+                manager.updateAppWidget(id, rendered)
             }
             WidgetArtwork.fetch(context.applicationContext, state.artwork)
         }
@@ -141,7 +162,9 @@ class ListeningWidgetProvider : AppWidgetProvider() {
             })
             val position = if (state.durationMs > 0) "${WidgetPolicy.time(state.positionMs)} / ${WidgetPolicy.time(state.durationMs)}"
                 else WidgetPolicy.time(state.positionMs)
-            views.setTextViewText(R.id.widget_position, if (state.mediaId.isEmpty()) "Ready to listen" else position)
+            views.setTextViewText(R.id.widget_position, if (state.mediaId.isEmpty()) "Ready to listen"
+                else if (layout == R.layout.bustaudio_listening_widget_column) position.replace(" / ", "\n/ ") else position)
+            views.setContentDescription(R.id.widget_position, position)
             views.setProgressBar(R.id.widget_progress, 100, WidgetPolicy.progress(state), false)
             views.setTextViewText(R.id.widget_back, "−${state.backwardSeconds}")
             views.setTextViewText(R.id.widget_forward, "+${state.forwardSeconds}")
@@ -169,3 +192,8 @@ class ListeningWidgetProvider : AppWidgetProvider() {
         }
     }
 }
+
+class ColumnWidgetProvider : ListeningWidgetProvider()
+class RowWidgetProvider : ListeningWidgetProvider()
+class SquareWidgetProvider : ListeningWidgetProvider()
+class WideWidgetProvider : ListeningWidgetProvider()

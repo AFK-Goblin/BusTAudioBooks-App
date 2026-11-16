@@ -8,6 +8,15 @@ data class WidgetState(
 )
 
 object WidgetPolicy {
+    fun layout(width: Int, height: Int): String? = when {
+        width <= 0 || height <= 0 -> null
+        width < 110 -> "column"
+        width >= 200 && height < 148 -> "row"
+        width >= 250 -> "wide"
+        height < 180 -> "square"
+        else -> "compact"
+    }
+
     fun controlUri(action: String, mediaId: String): String =
         "bustaudio-widget://control/$action?mediaId=${java.net.URLEncoder.encode(mediaId, "UTF-8")}"
 

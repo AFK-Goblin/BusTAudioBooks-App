@@ -9,4 +9,9 @@
         <item name="android:colorAccent">#a78bfa</item>
         <item name="android:windowDisablePreview">true</item>
     </style>
+    <string name="bustaudio_widget_name_compact">Cover · 2×3</string>
+    <string name="bustaudio_widget_name_column">Column · 1×4</string>
+    <string name="bustaudio_widget_name_row">Player bar · 4×1</string>
+    <string name="bustaudio_widget_name_square">Compact · 2×2</string>
+    <string name="bustaudio_widget_name_wide">Wide · 4×2</string>
 </resources>

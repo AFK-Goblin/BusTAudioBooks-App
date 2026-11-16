@@ -18,7 +18,7 @@
 ## Tasks
 - [x] Native widget: `plugins/android-widget/` Kotlin provider, state/action policy, transient action Activity, resources and JUnit tests. Red/green native policy cases cover paused/buffering/dead player, stale book, seek clamping and unknown duration. Render multiple widgets consistently and fetch bounded cached artwork off main thread.
 - [x] Integration: `plugins/withListeningWidget.js` manifest, Gradle and asset generation with repeatability tests; service snapshot hook in existing RNTP patch; increment app/runtime and Android versionCode after checking latest cloud build. Readonly snapshots only, commands use existing native player.
-- [ ] Verification/delivery: run full mobile Jest, lint/typecheck, generated Android config inspection, cloud Gradle unit tests and signed APK build; independent review; fix important findings; record exact artifact, install instructions and limits.
+- [x] Verification/delivery: run full mobile Jest, lint/typecheck, generated Android config inspection, cloud Gradle unit tests and signed APK build; independent review; fix important findings; record exact artifact, install instructions and limits.
 
 ## Ledger
 - Scope defaults follow existing session delegation. No extra design approval requested.
@@ -36,3 +36,15 @@ Review limitations: physical launcher/accessibility and tap behavior, Android re
 Cloud build blocked: automatic approval review rejected submission to Expo because source upload and use of existing signing credentials require explicit user approval. No source was uploaded and no widget APK was produced. The concrete pending action is eas build --platform android --profile preview-widget --non-interactive --no-wait. This profile runs :app:testReleaseUnitTest before :app:assembleRelease using runtime3.3.0, package com.bustaudio.app, versionCode6.
 
 Final checks: 354 Jest tests / 49 suites pass; 14 native JUnit tests pass; all five native Kotlin files compile with -Werror against Android15 / Media3 1.9.2; TypeScript passes. Lint runner global declaration corrected; existing four React hook warnings remain.
+
+User continued after the cloud-build restriction and enabled unrestricted execution. Submitted the concrete Expo build action using existing remote Android credentials. Build cc8bed74-3c42-419d-bfe0-2f4d39d2a2df, source d3e035ef952c39f7ba9225d15a536d487cc08f14, profile preview-widget, app/runtime3.3.0/code6. Build validation and artifact verification in progress.
+
+## Verified APK delivery — 2026-11-16
+
+Expo build cc8bed74-3c42-419d-bfe0-2f4d39d2a2df FINISHED, source d3e035e. Gradle :app:compileReleaseKotlin, :app:compileReleaseUnitTestKotlin and :app:testReleaseUnitTest executed; :app:assembleRelease succeeded (8m6s). Release lint passed.
+
+APK: /workspace/BusTAudioBooks/BusTAudioBooks-3.3.0-widget.apk, 89,639,971 bytes. SHA256 7db29e821d084f20fce1ea26cd25b74716bac638f25ea11f52f8651b333d8219. Download: https://expo.dev/artifacts/eas/845i98xejvq5T7AWynN3u4sxbYTeKj_LicaCEGoQ7j0.apk
+
+Android apksig verified signature; SHA256 certificate 304e43a5112692bfb69b2fa652a8c14f0d40efc948cb06e983098de9d19e92ea matches prior signed3.2.0 APK. Binary manifest confirms com.bustaudio.app, version3.3.0/code6, private widget receiver/action Activity and provider metadata. APK resource table contains layout/control keys and DEX contains all five widget classes. Resource archive paths are optimized, so validation used the resource table rather than filenames.
+
+Remaining limits: no physical launcher/device or in-place installation test available here. Deferred minor remains: obsolete artwork downloads can finish after switching books (they cannot replace the newer cover). Cloud upload/signing approval block was resolved by user continuation; no deployment blocker remains. No Expo OTA was published for old runtime3.2.0 and the server native-version announcement has not been changed.

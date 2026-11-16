@@ -204,4 +204,4 @@ When Android has fully stopped the player, a control opens the app to restore pl
 
 Build verification: npx eas-cli build --platform android --profile preview-widget runs native unit tests before assembling the APK. Local native policy tests can also run with node scripts/test-widget-policy.cjs (requires Java, kotlinc, JUNIT_JAR and HAMCREST_JAR). The widget plugin copies tracked Kotlin/XML/tests during Expo prebuild.
 
-Current delivery status: implementation locally tested; signed APK cloud submission awaits explicit source-upload/signing approval. Launcher rendering, actual taps and signed upgrade still require Android device validation.
+Current delivery status: signed 3.3.0 APK built successfully with native tests. Signature matches the prior 3.2.0 release; packaged widget components verified. [Download the widget APK](https://expo.dev/artifacts/eas/845i98xejvq5T7AWynN3u4sxbYTeKj_LicaCEGoQ7j0.apk). Launcher rendering, actual taps and in-place upgrade still need physical Android device validation.

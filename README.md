@@ -7,6 +7,13 @@ chapters, bookmarks, a sleep timer, and **Continue Listening** with saved progre
 It talks to your server's `/app` API. Users configure it once by pasting their
 BusTAudio install link (the same link they'd use in Stremio).
 
+## Downloads
+
+- [Android 3.3.2 APK](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/download/v3.3.2/BusTAudioBooks-3.3.2.apk)
+- [Windows 1.1.0 installer (64-bit)](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/download/desktop-v1.1.0/BusTAudio-Setup-1.1.0-x64.exe)
+
+Install over your existing app to retain its data. If you used the Windows portable ZIP, close it and run the installer once; use the Start menu copy afterward to receive automatic updates. Windows releases use `desktop-v…` tags and the `desktop-stable` update feed. Android uses `v…` tags and remains GitHub's latest release for the server's Android update lookup.
+
 ## Windows and private libraries
 
 The [Windows desktop app](desktop/README.md) uses the same catalogue with separate,
@@ -19,9 +26,9 @@ existing phone library. Choose **Sync now** before switching devices. Downloads
 stay local. A phone library remains bound to its original account; signing out
 does not erase its offline books. Windows clears its account cache at sign-out.
 
-The initial Windows bundle is unsigned and needs a native Windows check. See the
-desktop README for build and setup instructions. Deploy the account service before
-publishing the Android account-screen update.
+The Windows installer is unsigned. It was built on GitHub's Windows runner with
+unit and browser checks; interactive installation and a full upgrade cycle still
+need validation on a Windows computer. See the desktop README for setup instructions.
 
 ## Features
 
@@ -47,11 +54,11 @@ publishing the Android account-screen update.
   changes ship as a new APK announced through the server's `/app/version`.
 
 > ⚠️ **Release rule:** `app.json`'s `runtimeVersion` is pinned to the literal
-> `"3.2.0"` (the native runtime of the current APK) so JS-only
+> `"3.3.2"` (the native runtime of the current APK) so JS-only
 > releases OTA to existing installs. If a release adds/changes ANY native
 > module or bumps the Expo SDK, you MUST bump `runtimeVersion` (e.g. to
-> `"3.3.0"`), build + distribute a new APK, and set `APP_LATEST_VERSION` /
-> `APP_APK_URL` on the server — publishing native-dependent JS against the old
+> `"3.3.3"`), build + distribute a new APK, and publish it as the latest GitHub
+> Android release (or update explicit server version overrides) — publishing native-dependent JS against the old
 > runtimeVersion would hard-crash every OTA'd install.
 
 ## What you need (on your PC)
@@ -194,14 +201,14 @@ Lint currently reports the existing warning backlog but must have zero errors.
   generates the install link on its `/configure` page and serves the `/app` API.
   https://github.com/AFK-Goblin/BusTAudioBooks
 
-## Android home-screen widget (3.3.0)
+## Android home-screen widgets (3.3.2)
 
-The native widget shows the current audiobook, chapter, current-part progress and playback controls in the app's plum theme. It uses the same player as the notification and respects the skip intervals in Settings. Titles use two lines; tap the book to open BusTAudio.
+The native widgets show the current audiobook and playback controls in the app's plum theme. Choose a 1×4 column, 4×1 player bar, 2×2 compact, 2×3 cover or 4×2 wide preset. Layouts adapt to the actual space available, showing chapter and progress details where they fit. All presets use the notification's player and respect the skip intervals in Settings; tap the book to open BusTAudio.
 
-This feature requires installing the signed 3.3.0 APK over the existing app; it cannot arrive through the 3.2.0 Expo update channel. Keep the same package/signing key to preserve local data. After installation, long-press an empty home-screen area, choose Widgets, find BusTAudioBooks and drag the listening widget onto the screen. It can be resized.
+All five presets require installing the signed 3.3.2 APK over the existing app; native widgets cannot arrive through an older Expo update channel. Keep the same package/signing key to preserve local data. After installation, open the app once, then use your launcher's widget picker to add and resize a widget. Cell dimensions depend on the launcher.
 
 When Android has fully stopped the player, a control opens the app to restore playback safely. The widget does not recreate a queue or overwrite progress from its cached display. While the existing player is running, controls work without navigating the app.
 
 Build verification: npx eas-cli build --platform android --profile preview-widget runs native unit tests before assembling the APK. Local native policy tests can also run with node scripts/test-widget-policy.cjs (requires Java, kotlinc, JUNIT_JAR and HAMCREST_JAR). The widget plugin copies tracked Kotlin/XML/tests during Expo prebuild.
 
-Current delivery status: signed 3.3.0 APK built successfully with native tests. Signature matches the prior 3.2.0 release; packaged widget components verified. [Download the widget APK](https://expo.dev/artifacts/eas/845i98xejvq5T7AWynN3u4sxbYTeKj_LicaCEGoQ7j0.apk). Launcher rendering, actual taps and in-place upgrade still need physical Android device validation.
+Current delivery status: signed 3.3.2 APK published with native tests passing. Signature matches the prior 3.2.0 release; all five packaged widget presets were verified. [Release notes and APK](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/tag/v3.3.2). Launcher rendering, actual taps and in-place upgrade still need physical Android device validation. Mobile CI's Expo Doctor check currently reports newer SDK patch recommendations; the published APK retains the locked dependencies from its verified cloud build.

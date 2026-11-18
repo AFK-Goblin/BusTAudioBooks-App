@@ -4,15 +4,15 @@ A Windows x64 app for the same BusTAudio audiobook catalogue, with invite-only p
 
 ## Run the Windows app
 
-1. Close the old portable app and run **build/BusTAudio-Setup-1.1.0-x64.exe** once.
+1. Close the old portable app and run the [Windows 1.1.0 installer](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/download/desktop-v1.1.0/BusTAudio-Setup-1.1.0-x64.exe) once.
 2. Open **BusTAudio** from the Start menu. Use this installed copy going forward.
 3. Existing app data is retained under the same Windows user: package name and product name are unchanged. New installs ask for your secure BusTAudio install link and personal account.
 4. Choose your accent in **Settings → Appearance**. The library highlights your most recently listened book; long player titles expand on hover or keyboard focus.
-5. Once the Windows release feed is published, updates check at startup and every six hours, download in the background, and offer **Restart to update**. Settings also provides a manual check and retry. Restart saves your place first and stops if library changes need review. Updates never install automatically on quit.
+5. Updates check the published Windows feed at startup and every six hours, download in the background, and offer **Restart to update**. Settings also provides a manual check and retry. Restart saves your place first and stops if library changes need review. Updates never install automatically on quit.
 
 The optional portable ZIP, **build/BusTAudio-1.1.0-windows-x64.zip**, still works after extracting all files, but does not update itself. Appearance is stored per computer and survives account sign-out.
 
-This build is unsigned. Windows may show an unknown publisher prompt. A Windows signing certificate was not supplied. It is built on Linux and still needs a native Windows playback and credential-storage check before wider distribution.
+This build is unsigned. Windows may show an unknown publisher prompt. A Windows signing certificate was not supplied. The published installer was built on GitHub's Windows runner with unit and browser checks; interactive installation, native playback, credential storage and an actual upgrade cycle still need validation on Windows.
 
 Personal accounts require the companion accounts server routes to be deployed with persistent database storage. An older catalogue-only server cannot sign users in. The owner creates a separate invitation for each person with the accounts backend's local administration command; registration is not public. Keep the install link and invitations private.
 
@@ -65,7 +65,7 @@ The app's update feed is the public GitHub release **desktop-stable**, separate 
 3. Test installation on Windows, retained login/library, playback, and an actual older-to-newer update. Review the draft and publish it.
 4. The publish event verifies manifest version, asset name, installer SHA-512/size and rollback protection, then uploads the installer/blockmap to **desktop-stable** before replacing `latest.yml`. Retain previous installer assets for differential downloads. This promotion must finish before installed apps can see the update.
 
-No live Windows release has been published from this workspace yet; GitHub write access is required. A local installer build alone does not make the update feed live. Distribution remains unsigned; HTTPS and release checksums protect transfer integrity, but they do not replace a publisher signing identity.
+Windows 1.1.0 is published as [desktop-v1.1.0](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/tag/desktop-v1.1.0). The [desktop-stable release](https://github.com/AFK-Goblin/BusTAudioBooks-App/releases/tag/desktop-stable) serves installed-app update metadata. Keep both Windows releases marked `--latest=false` so the server's Android release lookup continues to find an APK. A local installer build alone does not make the update feed live. Distribution remains unsigned; HTTPS and release checksums protect transfer integrity, but they do not replace a publisher signing identity.
 
 ## Security and verification
 

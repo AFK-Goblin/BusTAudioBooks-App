@@ -23,6 +23,7 @@ import {
   setConfig,
 } from "@kesha-antonov/react-native-background-downloader";
 import { createNativeDownload } from "./downloads/adapter";
+import { getVerifiedBook, reconcileDownloadedBooks } from "./downloads/localFiles";
 import { upsertBook, finishedBooks, clearBookDownload, getBook, getLibrary, removeBooks } from "./library";
 import { startTracking, beginTransfer, reportProgress, finishTracking, failTracking, dismissTracking } from "./downloadStore";
 import { showToast } from "./toast";
@@ -287,7 +288,7 @@ async function runBookDownload(book, files, existingTasks, onProgress, dir, nami
   try {
     // A job can outlive the final library write if the app dies before job
     // removal. Never overwrite that completed offline copy on recovery.
-    const owner = await getBook(book.id);
+    const owner = await getVerifiedBook(book.id);
     if (owner && owner.downloaded) {
       await removeJob(book.id).catch(() => {});
       finishTracking(book.id);
@@ -462,6 +463,7 @@ async function freshLinks(bookId, files) {
 // Called once at boot: finish any book whose download the OS carried on with
 // (or that stalled) while the app was dead.
 export async function resumePendingDownloads() {
+  await reconcileDownloadedBooks();
   configureNotifications();
   const jobs = await loadJobs();
   const ids = Object.keys(jobs);

@@ -2,10 +2,11 @@ import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SectionList, ScrollView, Alert, useWindowDimensions } from "react-native";
 import { theme } from "../src/theme";
 import {
-  librarySections, getLibrary, removeBook,
+  librarySections, removeBook,
   setFinished, resetProgress, setSaved, isStarted, setRating,
 } from "../src/library";
 import { freeDownload } from "../src/freeDownload";
+import { getVerifiedBook, reconcileDownloadedBooks } from "../src/downloads/localFiles";
 import { deleteDownload, retryDownload, cancelDownload } from "../src/downloads";
 import { useDownloads, dismissTracking } from "../src/downloadStore";
 import { useWaiting, stopWaiting } from "../src/waiting";
@@ -35,6 +36,7 @@ export default function LibraryScreen({ nav }) {
   const { width } = useWindowDimensions();
 
   const load = useCallback(async () => {
+    await reconcileDownloadedBooks().catch(() => {});
     const { continueListening: cont, wantToListen: want, downloads: dls, finished: fin, bookmarkCount: marks } = await librarySections();
     setBookmarkCount(marks);
     const s = [];
@@ -91,8 +93,7 @@ export default function LibraryScreen({ nav }) {
   }
 
   async function play(book, fromStart = false) {
-    const lib = await getLibrary();
-    const fresh = lib[book.id] || book;
+    const fresh = await getVerifiedBook(book.id).catch(() => null) || book;
     if (!fresh.files || fresh.files.length === 0) {
       // Not downloaded and no cached stream URLs — send to detail to re-resolve.
       nav.navigate("book", { item: fresh });

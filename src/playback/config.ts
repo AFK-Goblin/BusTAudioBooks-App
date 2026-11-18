@@ -10,7 +10,8 @@ export function buildPlayerConfig() {
       taskRemovedBehavior: "continue" as const,
     },
     progressSync: { intervalSeconds: 5 },
-    cache: { maxSizeBytes: 512 * 1024 * 1024, preloading: { window: 1 } },
+    // RNTP preloads whole files for positive windows; audiobook parts can be GBs.
+    cache: { maxSizeBytes: 512 * 1024 * 1024, preloading: { window: 0 } },
   };
 }
 

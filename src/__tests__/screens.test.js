@@ -5,6 +5,12 @@ import { render as rtlRender, screen, fireEvent, waitFor, act } from "@testing-l
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+jest.mock("expo-file-system/legacy", () => ({
+  getInfoAsync: jest.fn(),
+  getFreeDiskStorageAsync: jest.fn(async () => 10 * 1024 ** 3),
+}));
+const fileSystem = require("expo-file-system/legacy");
+
 // ---- native + service seams ------------------------------------------------------
 const mockSnapshot = { current: null };
 const mockProgress = { position: 0, duration: 0 };
@@ -68,6 +74,7 @@ const CHAPTERS = [
 beforeEach(async () => {
   await AsyncStorage.clear();
   jest.clearAllMocks();
+  fileSystem.getInfoAsync.mockReset().mockImplementation(async (uri) => ({ exists: true, size: uri === "file:///x" ? 5 * 1024 * 1024 : 100 }));
   Object.assign(mockProgress, { position: 4000, duration: 12000 });
   mockSnapshot.current = { book: m4b, status: "paused", intent: "paused", rate: 1, sleep: { mode: "off" }, activeTrackIndex: 0 };
   chaptersService.embeddedChapters.mockResolvedValue(CHAPTERS);
@@ -912,4 +919,31 @@ test("below-player layout includes multipart files and retains chapter search", 
   await waitFor(() => expect(player.skipToIndex).toHaveBeenCalledWith(24));
   expect(screen.getByPlaceholderText("Find a part").props.value).toBe("");
   expect(screen.getByText("Part title 2")).toBeTruthy();
+});
+
+test("a restored book with missing audio resolves fresh streams and preserves progress", async () => {
+  fileSystem.getInfoAsync.mockResolvedValue({ exists: false });
+  await library.upsertBook({ id: "restored", title: "Words of Radiance", downloaded: true, files: [{ uri: "file:///lost/book.m4b", size: 100 }], progress: { position: 1234, trackIndex: 0 } });
+  api.getStreams.mockResolvedValueOnce({ ready: true, streams: [{ title: "Book", filename: "Book.m4b", url: "https://cdn/fresh" }] });
+  await render(<BookScreen nav={nav} params={{ item: { id: "restored", title: "Words of Radiance" } }} />);
+  await waitFor(() => expect(api.getStreams).toHaveBeenCalledWith("restored"));
+  await waitFor(async () => expect(await library.getBook("restored")).toMatchObject({ files: [], progress: { position: 1234 } }));
+  expect(screen.queryByText("Downloaded")).toBeNull();
+});
+
+test("a storage inspection error keeps offline metadata and retries inspection before playback", async () => {
+  const files = [{ uri: "file:///valid/book.m4b", size: 100 }];
+  await library.upsertBook({ id: "disk-error", title: "Offline Book", downloaded: true, files, progress: { position: 1234 } });
+  fileSystem.getInfoAsync.mockRejectedValue(new Error("Storage temporarily unavailable"));
+  await render(<BookScreen nav={nav} params={{ item: { id: "disk-error", title: "Offline Book" } }} />);
+  expect(await screen.findByText("Storage temporarily unavailable")).toBeTruthy();
+  expect(api.getStreams).not.toHaveBeenCalled();
+  expect(screen.queryByText("Stream now")).toBeNull();
+  expect(await library.getBook("disk-error")).toMatchObject({ downloaded: true, files });
+  fileSystem.getInfoAsync.mockResolvedValue({ exists: true, size: 100 });
+  await fireEvent.press(screen.getByText("Retry"));
+  expect(await screen.findByText("Downloaded · plays offline")).toBeTruthy();
+  await fireEvent.press(screen.getByText("Resume"));
+  expect(player.resumeOrLoad).toHaveBeenCalledWith(expect.objectContaining({ downloaded: true, files }), false);
+  expect(await library.getBook("disk-error")).toMatchObject({ downloaded: true, files, progress: { position: 1234 } });
 });

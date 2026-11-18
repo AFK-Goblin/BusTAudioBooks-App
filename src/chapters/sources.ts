@@ -8,23 +8,58 @@ export function remoteSource(url: string, fetcher: typeof fetch = fetch, timeout
   return {
     size: () => size,
     async read(offset, length) {
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0 || length > 8 * 1024 * 1024 || !Number.isSafeInteger(offset + length)) {
+        throw new Error("Invalid chapter byte range");
+      }
+      if (length === 0) return new Uint8Array(0);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
         const response = await fetcher(url, {
           headers: { Range: `bytes=${offset}-${offset + length - 1}` },
           signal: controller.signal,
         });
-        if (response.status === 416) return new Uint8Array(0); // starts past the end
-        if (response.status !== 206) {
-          // A 200 would be the WHOLE file (hundreds of MB): drop it unread.
+        if (response.status === 416) {
           controller.abort();
+          return new Uint8Array(0);
+        }
+        if (response.status !== 206) {
           throw new Error(`Range request refused (HTTP ${response.status})`);
         }
-        const total = /\/(\d+)\s*$/.exec(response.headers.get("content-range") ?? "");
-        if (total) size = Number(total[1]);
-        return new Uint8Array(await response.arrayBuffer());
+        const range = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(response.headers.get("content-range")?.trim() ?? "");
+        const first = Number(range?.[1]);
+        const last = Number(range?.[2]);
+        const total = range?.[3] === "*" ? undefined : Number(range?.[3]);
+        if (!range || first !== offset || !Number.isSafeInteger(last) || last < first || last >= offset + length ||
+            (total !== undefined && (!Number.isSafeInteger(total) || total <= last))) {
+          throw new Error("Invalid chapter Content-Range");
+        }
+        const expected = last - first + 1;
+        const contentLength = response.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) !== expected) throw new Error("Invalid chapter Content-Length");
+        // Expo's streaming fetch lets us bound reads before collecting a body.
+        // Never fall back to arrayBuffer(): a bad CDN response could be the book.
+        if (!response.body) throw new Error("Chapter response has no readable body");
+        reader = response.body.getReader();
+        const bytes = new Uint8Array(expected);
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value.byteLength > expected - received) throw new Error("Oversized chapter response");
+          bytes.set(value, received);
+          received += value.byteLength;
+        }
+        if (received !== expected) throw new Error("Truncated chapter response");
+        if (total !== undefined) size = total;
+        return bytes;
+      } catch (error) {
+        controller.abort();
+        if (reader) void reader.cancel().catch(() => {});
+        throw error;
       } finally {
+        reader?.releaseLock();
         clearTimeout(timer);
       }
     },

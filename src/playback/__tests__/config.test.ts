@@ -52,3 +52,10 @@ describe("now-playing part titles", () => {
     expect(partTitle({ title: "The Book" }, {}, 4, 12)).toBe("The Book — Part 5");
   });
 });
+
+test("keeps demand caching without native whole-part preloading", () => {
+  // RNTP 5.8 maps a positive window to Long.MAX_VALUE preload duration.
+  const config = buildPlayerConfig();
+  expect(config.cache.maxSizeBytes).toBeGreaterThan(0);
+  expect(config.cache.preloading.window).toBe(0);
+});

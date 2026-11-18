@@ -3,26 +3,27 @@ import { embeddedChapters } from "../chapters";
 import { followChapterTitles } from "../chapters/nowPlaying";
 import { followBedtime } from "./bedtime";
 import { followListening } from "../stats";
-import { checkpointAudiobookProgress, continueListening, getBook } from "../library";
+import { checkpointAudiobookProgress, continueListening } from "../library";
 import { getSettings, SLEEP_FADE_SECONDS } from "../settings";
 import { SessionRepository } from "../repositories/sessionRepository";
 import { CheckpointWriter } from "./checkpointWriter";
 import { buildPlayerConfig, buildRemoteCommands } from "./config";
 import { nativePlayer } from "./nativePlayer";
+import { getVerifiedBook } from "../downloads/localFiles";
 import { PlaybackSession } from "./session";
 import type { PlaybackBook } from "./types";
 
 const sessions = new SessionRepository();
 const library = {
   async get(id: string): Promise<PlaybackBook | null> {
-    const value = await getBook(id);
+    const value = await getVerifiedBook(id);
     if (!value || !Array.isArray(value.files)) return null;
     return value as PlaybackBook;
   },
   async recent(): Promise<PlaybackBook | null> {
     if (!getSettings().autoResume) return null;
     const items = await continueListening();
-    const value = items[0];
+    const value = items[0] ? await getVerifiedBook(items[0].id) : null;
     return value && Array.isArray(value.files) ? value as PlaybackBook : null;
   },
 };

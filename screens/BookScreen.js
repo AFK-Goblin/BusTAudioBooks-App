@@ -3,13 +3,14 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView
 import { theme } from "../src/theme";
 import { getStreams, getDetails } from "../src/api";
 import { resumeOrLoad, playFrom } from "../src/player";
-import { upsertBook, getBook, getSavedDetails, saveDetails, setSaved, isStarted, getEmbeddedChapters, listBooks } from "../src/library";
+import { upsertBook, getSavedDetails, saveDetails, setSaved, isStarted, getEmbeddedChapters, listBooks } from "../src/library";
 import { seriesOf, ownedCopy, comingLabel } from "../src/series";
 import { waitFor, stopWaiting, useWaiting } from "../src/waiting";
 import { notificationsAllowed } from "../src/notify";
 import { chapterKey, CHAPTER_PARSER_VERSION } from "../src/chapters/index";
 import { chapterIndexAt } from "../src/chapters/navigation";
 import { cancelDownload } from "../src/downloads";
+import { getVerifiedBook } from "../src/downloads/localFiles";
 import { downloadWithSpaceCheck, totalSize } from "../src/downloadPrompt";
 import { useDownloads } from "../src/downloadStore";
 import { formatBytes, formatDuration, formatTime } from "../src/format";
@@ -40,6 +41,8 @@ export default function BookScreen({ nav, params }) {
   const [entry, setEntry] = useState(undefined); // undefined = still reading the library
   const [state, setState] = useState({ loading: false });
   const [busy, setBusy] = useState(false);
+  const [storageError, setStorageError] = useState(null);
+  const [inspectionVersion, setInspectionVersion] = useState(0);
   const [details, setDetails] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [listened, setListened] = useState(0); // seconds you've spent in this book
@@ -89,7 +92,13 @@ export default function BookScreen({ nav, params }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const existing = await getBook(item.id).catch(() => null);
+      let existing;
+      try {
+        existing = await getVerifiedBook(item.id);
+      } catch (error) {
+        if (alive) setStorageError(error.message || "Could not check downloaded audio. Please retry.");
+        return;
+      }
       if (!alive) return;
       setEntry(existing);
       const saved = existing ? await getSavedDetails(item.id) : null;
@@ -111,7 +120,7 @@ export default function BookScreen({ nav, params }) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id]);
+  }, [item.id, inspectionVersion]);
 
   // The series this book is in (server 3.1+), and which of it you have.
   useEffect(() => {
@@ -137,7 +146,7 @@ export default function BookScreen({ nav, params }) {
   const activeDl = downloads.find((d) => d.id === item.id);
   useEffect(() => {
     if (activeDl) return;
-    getBook(item.id).then((value) => { if (value) setEntry(value); }).catch(() => {});
+    getVerifiedBook(item.id).then((value) => { if (value) setEntry(value); }).catch(() => {});
   }, [activeDl, item.id]);
 
   function bookObject(files) {
@@ -274,7 +283,12 @@ export default function BookScreen({ nav, params }) {
         ) : null}
       </View>
 
-      {entry === undefined || (!local && state.loading) ? (
+      {storageError ? (
+        <View style={styles.box}>
+          <Text style={styles.warn}>{storageError}</Text>
+          <TouchableOpacity style={styles.retry} onPress={() => { setStorageError(null); setEntry(undefined); setInspectionVersion((v) => v + 1); }}><Text style={styles.retryTxt}>Retry</Text></TouchableOpacity>
+        </View>
+      ) : entry === undefined || (!local && state.loading) ? (
         <View style={styles.box}><ActivityIndicator color={theme.accent} /><Text style={styles.boxTxt}>{entry === undefined ? "Opening…" : "Resolving on TorBox…"}</Text></View>
       ) : !local && state.error ? (
         <View style={styles.box}>

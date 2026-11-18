@@ -4,6 +4,7 @@ import { buildRemoteCommands } from "./playback/config";
 import { playbackSession, setCarBrowseTree } from "./playback/runtime";
 import { buildBrowseTree } from "./playback/carBrowse";
 import { listBooks } from "./library";
+import { getVerifiedBook } from "./downloads/localFiles";
 import { getSettings } from "./settings";
 
 function legacySleep(sleep) {
@@ -15,6 +16,10 @@ function legacySleep(sleep) {
 export async function setupPlayer() { await playbackSession.initialize(); return true; }
 export function getCurrentBook() { return playbackSession.getSnapshot().book; }
 export async function loadBook(book, startTrack = 0, startPos = 0, options = {}) {
+  if (book.downloaded) {
+    book = await getVerifiedBook(book.id);
+    if (!book?.files?.length) throw new Error("Offline files are missing. Open the book to stream or download it again.");
+  }
   return playbackSession.loadBook(book, startTrack, startPos, options);
 }
 export async function play() { return playbackSession.play(); }

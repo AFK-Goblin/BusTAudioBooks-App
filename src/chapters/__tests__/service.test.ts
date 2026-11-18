@@ -80,8 +80,11 @@ test("navigation targets follow music-player conventions", () => {
 test("remote reads send a Range header, learn the size, and refuse a full-body 200", async () => {
   const fetcher = jest.fn(async (_url: string, init: any) => ({
     status: init.headers.Range === "bytes=0-3" ? 206 : 200,
-    headers: { get: () => "bytes 0-3/1000" },
-    arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    headers: { get: (name: string) => name === "content-range" ? "bytes 0-3/1000" : null },
+    body: { getReader: () => {
+      let sent = false;
+      return { read: async () => { if (sent) return { done: true }; sent = true; return { done: false, value: new Uint8Array([1, 2, 3, 4]) }; }, releaseLock: () => {}, cancel: async () => {} };
+    } },
   }));
   const source = remoteSource("https://cdn/x", fetcher as unknown as typeof fetch);
   expect(Array.from(await source.read(0, 4))).toEqual([1, 2, 3, 4]);

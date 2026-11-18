@@ -323,15 +323,20 @@ export function clearDownloadFlags() {
 }
 
 // Same, but for one book (auto-delete finished, per-book cleanup).
-export function clearBookDownload(id) {
+export function clearBookDownload(id, checkedEntry) {
   return locked(async () => {
     const lib = await getLibrary();
-    if (!lib[id]) return;
+    if (!lib[id]) return null;
+    // A newer download may finish while an earlier disk check is awaiting I/O.
+    if (checkedEntry && (lib[id].downloaded !== checkedEntry.downloaded ||
+      lib[id].downloadedAt !== checkedEntry.downloadedAt || lib[id].storageDir !== checkedEntry.storageDir ||
+      JSON.stringify(lib[id].files) !== JSON.stringify(checkedEntry.files))) return lib[id];
     delete lib[id].downloaded;
     delete lib[id].downloadedAt;
     delete lib[id].storageDir;
     lib[id].files = [];
     await setLibrary(lib);
+    return lib[id];
   });
 }
 

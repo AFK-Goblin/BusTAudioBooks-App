@@ -381,6 +381,7 @@ describe("download setup and recovery boundaries", () => {
 
   test("a stale pending job never overwrites an already completed offline copy", async () => {
     const saved = await library.upsertBook({ id: "already-local", title: "A", downloaded: true, storageDir: "old-folder", files: [{ uri: `${ROOT}/old-folder/original.mp3`, size: 100 }] });
+    mockDisk.files.set(`${ROOT}/old-folder/original.mp3`, 100);
     await AsyncStorage.setItem("bustaudio_dljobs", JSON.stringify({ "already-local": { book: { id: "already-local", title: "A" }, files: one } }));
     await downloads.resumePendingDownloads();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -454,4 +455,55 @@ test("a cleanup storage read failure cannot prevent cancellation file cleanup", 
   await downloads.cancelDownload("cleanup-read");
   await expect(done).rejects.toBeInstanceOf(downloads.DownloadCancelled);
   expect(mockDisk.deleted).toContain(`${ROOT}/cleanup-read`);
+});
+
+
+describe("downloads restored after reinstall", () => {
+  const one = [{ url: "https://cdn/part", filename: "part.mp3", size: 100 }];
+  test("a restored downloaded flag cannot skip re-downloading missing audio", async () => {
+    const progress = { trackIndex: 0, position: 1234, finished: false };
+    await library.upsertBook({ id: "restored", title: "Restored", downloaded: true, storageDir: "old", files: [{ uri: ROOT + "/old/missing.mp3", size: 100 }], progress });
+    const result = await downloads.downloadBook({ id: "restored", title: "Restored" }, one);
+    expect(result.files).toEqual([{ uri: ROOT + "/restored/0001-part.mp3", filename: "part.mp3", size: 100 }]);
+    expect(result.progress).toEqual(progress);
+    expect(mockDisk.files.get(result.files[0].uri)).toBe(100);
+  });
+  test("startup repairs missing and truncated downloads even with no pending jobs", async () => {
+    for (const id of ["missing", "truncated", "valid"]) {
+      await library.upsertBook({ id, title: id, downloaded: true, downloadedAt: 10, storageDir: id,
+        files: [{ uri: ROOT + "/" + id + "/part.mp3", size: 100 }], progress: { trackIndex: 2, position: 456, finished: true },
+        saved: true, bookmarks: [{ trackIndex: 1, position: 23 }] });
+    }
+    mockDisk.files.set(ROOT + "/truncated/part.mp3", 50);
+    mockDisk.files.set(ROOT + "/valid/part.mp3", 100);
+    await downloads.resumePendingDownloads();
+    for (const id of ["missing", "truncated"]) {
+      const entry = await library.getBook(id);
+      expect(entry.downloaded).toBeUndefined();
+      expect(entry.files).toEqual([]);
+      expect(entry.storageDir).toBeUndefined();
+      expect(entry).toMatchObject({ saved: true, progress: { trackIndex: 2, position: 456, finished: true }, bookmarks: [{ trackIndex: 1, position: 23 }] });
+    }
+    expect((await library.getBook("valid")).downloaded).toBe(true);
+    expect(mockDisk.deleted).toEqual([]);
+  });
+  test("a failed disk check does not erase a downloaded library entry", async () => {
+    const entry = await library.upsertBook({ id: "disk-error", downloaded: true, files: [{ uri: ROOT + "/part.mp3", size: 100 }] });
+    require("expo-file-system/legacy").getInfoAsync.mockRejectedValueOnce(new Error("disk unavailable"));
+    await expect(downloads.resumePendingDownloads()).rejects.toThrow("disk unavailable");
+    expect(await library.getBook("disk-error")).toEqual(entry);
+    require("expo-file-system/legacy").getInfoAsync.mockClear();
+  });
+  test("a stale missing-file check does not clear a newly replaced download", async () => {
+    await library.upsertBook({ id: "replaced", downloaded: true, files: [{ uri: ROOT + "/old.mp3", size: 100 }] });
+    let release;
+    require("expo-file-system/legacy").getInfoAsync.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const recovery = downloads.resumePendingDownloads();
+    await tick();
+    if (!release) { await recovery; throw new Error("Restored download was not inspected"); }
+    const newer = await library.upsertBook({ id: "replaced", downloaded: true, downloadedAt: 20, files: [{ uri: ROOT + "/new.mp3", size: 200 }] });
+    release({ exists: false });
+    await recovery;
+    expect(await library.getBook("replaced")).toEqual(newer);
+  });
 });
